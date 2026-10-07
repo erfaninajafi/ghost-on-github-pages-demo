@@ -12,3 +12,16 @@ Thumbs.db
 
 # Temp deploy backups
 /tmp/
+
+# ExpertsAcademy applications
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+*.tsbuildinfo
+coverage.out
+coverage.html
+playwright-report/
+test-results/
+backups/

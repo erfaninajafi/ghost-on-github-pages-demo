@@ -1,87 +1,63 @@
-# Ghost on GitHub Pages — Live Demo
+# ExpertsAcademy Blog
 
-A live demonstration of [Ghost on GitHub Pages](https://github.com/paladini/ghost-on-github-pages) **version 3**: free Ghost blogging hosted on GitHub Pages with no server required.
+وبلاگ سازمانی اکسپرتس آکادمی برای `https://blog.expertsacademy.ir` با Go، PostgreSQL، Redis و Next.js 15.
 
-**Live site:** https://paladini.github.io/ghost-on-github-pages-demo/
+## اجرای محلی
 
-## What this repo shows
-
-| | **Current demo (v3)** | **Classic archive (v2)** |
-|---|---|---|
-| URL | [/static/](static/) | [/legacy/v2/static/](legacy/v2/static/) |
-| Ghost version | 5.x | 1.22.5 |
-| Static generator | gssg (Node.js) | buster (Python 2) |
-| Production URLs | Correct | Broken (localhost links) |
-| Tool version | [v3.0.0+](https://github.com/paladini/ghost-on-github-pages/releases/latest) | [v2.0.1](https://github.com/paladini/ghost-on-github-pages/releases/tag/v2.0.1) |
-
-The root `index.html` redirects to the v3 blog. The Classic v2 site is preserved under `legacy/v2/` as a historical reference — including its known localhost URL bugs.
-
-## Get your own blog
-
-Follow the [v3 Getting Started guide](https://github.com/paladini/ghost-on-github-pages/blob/master/docs/v3/GETTING-STARTED.md):
-
-1. Install [Node.js](https://nodejs.org/) and `wget`
-2. Download [ghost-on-github-pages v3](https://github.com/paladini/ghost-on-github-pages/releases/latest)
-3. Run `./install.sh`
-4. Write posts at `http://localhost:2373/ghost`
-5. Publish with `cd ~/.ghost && ./deploy.sh`
-
-Upgrading from Classic v2? See the [Migration guide](https://github.com/paladini/ghost-on-github-pages/blob/master/docs/MIGRATION.md).
-
-## Repository layout
-
-```
-├── index.html          # Redirect to v3 blog
-├── static/             # v3 static site (gssg output)
-├── legacy/v2/          # Frozen 2018 Classic demo
-├── content-seed/       # Ghost export for reproducing demo content
-├── scripts/            # Maintainer deploy scripts
-└── .github/workflows/  # CI validation
-```
-
-This repo contains **only static files and seed content** — not a full Ghost installation. That is by design in v3 (see [issue #9](https://github.com/paladini/ghost-on-github-pages/issues/9)).
-
-## Maintainers: republishing the demo
-
-### Prerequisites
-
-- Node.js, wget, and Ghost CLI installed
-- Local Ghost blog at `~/.ghost` configured for this repository
-- Bash shell (Git Bash or WSL on Windows)
-
-### Restore demo content
+پیش‌نیاز: Docker Engine و Compose v2، Python 3 و حداقل ۶ گیگابایت فضای آزاد برای اولین build.
 
 ```bash
-cd ~/.ghost/current
-ghost import content-seed/demo-posts.json
-ghost start
+./scripts/init-env.sh
+docker compose up --build -d
 ```
 
-### Publish
+مجله: <http://localhost:3000> — پنل نویسندگان: <http://localhost:3000/studio>
 
-From this repository checkout:
+اسکریپت آغازین `.env` را با چهار راز تصادفی مستقل می‌سازد و فایل موجود را تغییر نمی‌دهد. Migration پیش از API اجرا می‌شود. داده‌ها در volume پایدار نگهداری می‌شوند؛ PostgreSQL و Redis پورت عمومی ندارند. محتوای آزمایشی و حساب پیش‌فرض در دیتابیس ایجاد نمی‌شود.
+
+## ایجاد مدیر اول
 
 ```bash
-chmod +x scripts/deploy-demo.sh
-./scripts/deploy-demo.sh
+export ADMIN_EMAIL='admin@expertsacademy.ir'
+export ADMIN_NAME='مدیر آکادمی'
+read -rs -p 'Admin password (12–72 bytes): ' ADMIN_PASSWORD
+export ADMIN_PASSWORD
+docker compose run --rm -e ADMIN_EMAIL -e ADMIN_NAME -e ADMIN_PASSWORD --entrypoint admin api
+unset ADMIN_PASSWORD
 ```
 
-The deploy script runs the standard v3 `deploy.sh` and preserves `legacy/`, `content-seed/`, CI workflows, and this README in the published output.
+سپس وارد پنل شوید. نویسندگان با `AUTHOR_INVITE_CODE` موجود در `.env` ثبت‌نام می‌کنند؛ ثبت‌نام عمومی نقش مدیر نمی‌سازد. از پنل، دسته و برچسب بسازید، مقاله بنویسید و نظرات را تأیید کنید.
 
-### Deploy settings
+## ساختار
 
-The demo uses these GitHub Pages settings (saved in `~/.ghost/deploy.conf`):
+- `apps/api`: Domain، Use Case، Repository مبتنی بر sqlc و HTTP مبتنی بر chi.
+- `apps/api/db`: schema، migrationهای golang-migrate و کوئری‌ها.
+- `apps/web`: مجله فارسی، SEO، جستجو، نظرات و پنل نویسندگان.
+- `docker-compose.yml` و `Caddyfile`: سرویس‌ها، healthcheck و درگاه HTTPS.
+- [معماری و قراردادهای API](docs/ARCHITECTURE.md)
+- [راهنمای مدیر و نویسنده](docs/USER_GUIDE.md)
+- [راهنمای استقرار و نگهداری](docs/OPERATIONS.md)
+- [گزارش آزمون‌ها و محدودیت‌های تأیید](docs/VERIFICATION.md)
 
+## آزمون‌ها
+
+```bash
+cd apps/api
+go test -race ./...
+go vet ./...
+cd ../web
+npm ci
+npm run typecheck
+npm test
+npm run build
 ```
-GH_USERNAME=paladini
-GH_REPO=ghost-on-github-pages-demo
-PRODUCTION_DOMAIN=https://paladini.github.io/ghost-on-github-pages-demo
-```
 
-## License
+آزمون یکپارچهٔ Linux با دیتابیس و Redis واقعی: `./scripts/test-integration.sh`. این آزمون یک schema موقت می‌سازد و پاک می‌کند؛ دیتای اصلی را حذف نمی‌کند. متغیرهای `TEST_DATABASE_URL` و `TEST_REDIS_URL` در CI برای همین تست‌ها استفاده می‌شوند. بدون آن‌ها، تست‌های یکپارچه با گزارش skip کنار گذاشته می‌شوند.
 
-MIT — see [LICENSE](LICENSE).
+## استقرار رسمی
 
-## About
+در `.env` آدرس `SITE_URL=https://blog.expertsacademy.ir`، مقدار `CADDY_SITE=blog.expertsacademy.ir`، `APP_ENV=production`، پورت‌های `80/443` و SMTP واقعی را تنظیم کنید. پس از اتصال DNS به سرور و باز بودن پورت‌ها، `docker compose up --build -d` گواهی TLS را از طریق Caddy دریافت می‌کند. پیش از انتشار عمومی، مراحل [OPERATIONS](docs/OPERATIONS.md) را انجام دهید.
 
-Created by [Fernando Paladini](https://github.com/paladini) to showcase free Ghost hosting on GitHub Pages.
+## مسیر مهاجرت از دمو
+
+`static/`، `legacy/`، `content-seed/` و `index.html` قبلی به‌عنوان آرشیو حفظ شده‌اند. سرویس جدید از این فایل‌ها اجرا نمی‌شود و محتوای Ghost به‌طور خودکار به بانک سازمانی وارد نمی‌شود. [راهنمای دمو قبلی](docs/LEGACY_DEMO.md) محفوظ است. GitHub Pages اجرای Go، PostgreSQL یا Next.js server را پشتیبانی نمی‌کند؛ DNS رسمی باید به میزبان کانتینری اشاره کند. اسکریپت قدیمی `deploy-demo.sh` مخصوص انتشار آرشیو است و نباید برای نسخهٔ سازمانی استفاده شود.

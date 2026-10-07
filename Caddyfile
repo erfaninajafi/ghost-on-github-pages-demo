@@ -1,0 +1,15 @@
+{$CADDY_SITE:localhost} {
+ encode zstd gzip
+ header {
+  X-Content-Type-Options nosniff
+  X-Frame-Options DENY
+  Referrer-Policy strict-origin-when-cross-origin
+ }
+ @api path /api/v1/*
+ handle @api {
+  reverse_proxy api:8080
+ }
+ handle {
+  reverse_proxy web:3000
+ }
+}
