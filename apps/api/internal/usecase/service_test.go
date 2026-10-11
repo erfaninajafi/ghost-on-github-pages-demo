@@ -50,19 +50,16 @@ type fakeCache struct {
 
 func (f *fakeCache) Invalidate(context.Context) error { f.invalidated = true; return nil }
 func testService(repo *fakeRepo) *Service {
-	return &Service{Repo: repo, Cache: &fakeCache{}, Invite: "test-invitation", SiteURL: "https://blog.expertsacademy.ir", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	return &Service{Repo: repo, Cache: &fakeCache{}, SiteURL: "https://blog.expertsacademy.ir", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 func TestSignupDoesNotAllowPrivilegeEscalation(t *testing.T) {
 	r := &fakeRepo{}
 	s := testService(r)
-	if _, e := s.Signup(context.Background(), "نویسنده", "writer@example.com", "correct-password-123", "wrong"); !errors.Is(e, domain.ErrForbidden) {
-		t.Fatal(e)
-	}
-	u, e := s.Signup(context.Background(), "نویسنده", "writer@example.com", "correct-password-123", "test-invitation")
+	u, e := s.Signup(context.Background(), "", "writer@example.com", "correct-password-123")
 	if e != nil {
 		t.Fatal(e)
 	}
-	if u.Role != "author" || u.PasswordHash == "correct-password-123" || bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte("correct-password-123")) != nil {
+	if u.Name != "نویسنده" || u.Role != "author" || u.PasswordHash == "correct-password-123" || bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte("correct-password-123")) != nil {
 		t.Fatal("password/role invariant failed")
 	}
 	b, _ := json.Marshal(u)
@@ -147,5 +144,65 @@ func TestSlugAndPersianNormalization(t *testing.T) {
 	}
 	if !ValidSlug("آموزش-گو-۱۲") || Normalize(" كتاب يكي ") != "کتاب یکی" {
 		t.Fatal("Persian normalization failed")
+	}
+}
+
+func TestPublicSignupValidation(t *testing.T) {
+	s := testService(&fakeRepo{})
+	for _, input := range []struct{ email, password string }{{"invalid", "correct-password-123"}, {"writer@example.com", "short"}, {"writer@example.com", strings.Repeat("x", 73)}} {
+		if _, err := s.Signup(context.Background(), "", input.email, input.password); !errors.Is(err, domain.ErrInvalid) {
+			t.Fatalf("invalid signup accepted: %v", err)
+		}
+	}
+}
+
+func TestPlainTextPublicationAndEditorRoundTrip(t *testing.T) {
+	r := &fakeRepo{}
+	s := testService(r)
+	u := domain.User{ID: uuid.NewString(), Role: "author"}
+	source := "سلام <script>alert(1)</script> & متن\r\nخط دوم\r\n\r\nپاراگراف بعد"
+	in := PostInput{Title: "عنوان", Slug: "متن-ساده", Status: "published", ContentFormat: "plain_text", ContentText: source, ContentHTML: "<script>must be ignored</script>", ContentJSON: json.RawMessage(`{"format":"html","content":"untrusted metadata"}`)}
+	p, err := s.Save(context.Background(), u, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(p.ContentHTML, "<script>") || !strings.Contains(p.ContentHTML, "&lt;script&gt;") || !strings.Contains(p.ContentHTML, "<br>خط دوم</p>\n<p>پاراگراف بعد</p>") {
+		t.Fatal("unsafe or broken plain text conversion", p.ContentHTML)
+	}
+	var document editorDocument
+	if err = json.Unmarshal(p.ContentJSON, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.Format != "plain_text" || document.Content != strings.ReplaceAll(source, "\r\n", "\n") {
+		t.Fatal("plain text source was lost", document)
+	}
+	in.ID = p.ID
+	r.post = p
+	in.ContentText = document.Content
+	again, err := s.Save(context.Background(), u, in)
+	if err != nil || again.ContentHTML != p.ContentHTML {
+		t.Fatal("resaving changed the article", err)
+	}
+	in.ContentText = " \n\n "
+	if _, err = s.Save(context.Background(), u, in); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatal("empty plain text published", err)
+	}
+	in.ContentFormat = "markdown"
+	if _, err = s.Save(context.Background(), u, in); !errors.Is(err, domain.ErrInvalid) {
+		t.Fatal("unknown format accepted", err)
+	}
+}
+
+func TestExplicitHTMLStoresSanitizedEditorSource(t *testing.T) {
+	rendered, metadata, err := prepareContent(PostInput{ContentFormat: "html", ContentHTML: `<h2>عنوان</h2><script>bad()</script>`})
+	if err != nil || rendered != "<h2>عنوان</h2>" {
+		t.Fatal(rendered, err)
+	}
+	var document editorDocument
+	if err = json.Unmarshal(metadata, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.Format != "html" || document.Content != rendered {
+		t.Fatal("HTML editor source not sanitized")
 	}
 }

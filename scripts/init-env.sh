@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if [[ -e .env ]]; then
-  echo '.env already exists; nothing changed.'
-  exit 0
-fi
 umask 077
-python3 - <<'PY'
+python3 - <<'PYENV'
 from pathlib import Path
 import secrets
-source = Path('.env.example').read_text()
-for key in ['POSTGRES_PASSWORD','REDIS_PASSWORD','JWT_SECRET','AUTHOR_INVITE_CODE']:
-    source = source.replace(f'{key}=\n', f'{key}={secrets.token_hex(32)}\n')
-with open('.env', 'x') as output:
-    output.write(source)
-print('Created .env with independent random secrets. Keep this file private.')
-PY
+path = Path('.env')
+if path.exists():
+    source = path.read_text()
+    keys = {line.split('=', 1)[0].strip(): line.split('=', 1)[1].strip() for line in source.splitlines() if '=' in line and not line.lstrip().startswith('#')}
+    if not keys.get('REVALIDATION_SECRET'):
+        with path.open('a') as output:
+            output.write('\nREVALIDATION_SECRET=' + secrets.token_hex(32) + '\n')
+        print('Added REVALIDATION_SECRET; existing settings unchanged.')
+    else:
+        print('.env already exists; nothing changed.')
+else:
+    source = Path('.env.example').read_text()
+    for key in ['POSTGRES_PASSWORD', 'REDIS_PASSWORD', 'JWT_SECRET', 'REVALIDATION_SECRET']:
+        source = source.replace(f'{key}=\n', f'{key}={secrets.token_hex(32)}\n')
+    with path.open('x') as output:
+        output.write(source)
+    print('Created .env with independent random secrets. Keep this file private.')
+PYENV

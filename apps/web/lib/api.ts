@@ -21,7 +21,9 @@ export async function api<T>(
   const res = await fetch(`${base}/api/v1${path}`, {
     ...init,
     headers: {
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...(init.body && !(init.body instanceof FormData)
+        ? { "Content-Type": "application/json" }
+        : {}),
       ...init.headers,
     },
     signal: init.signal || AbortSignal.timeout(10000),
@@ -49,14 +51,16 @@ export async function api<T>(
   return res.json() as Promise<T>;
 }
 export const getPosts = (params: URLSearchParams = new URLSearchParams()) =>
-  api<PostPage>(`/posts?${params}`, { next: { revalidate: 60 } });
+  api<PostPage>(`/posts?${params}`, {
+    next: { revalidate: 60, tags: ["posts"] },
+  });
 export const getPopular = () =>
-  api<Post[]>("/posts/popular", { next: { revalidate: 30 } });
+  api<Post[]>("/posts/popular", { next: { revalidate: 30, tags: ["posts"] } });
 export const getTaxonomy = () =>
   api<Taxonomy>("/taxonomy", { next: { revalidate: 60 } });
 export const getPost = (slug: string) =>
   api<Post>(`/posts/${encodeURIComponent(slug)}?count_view=false`, {
-    next: { revalidate: 60 },
+    next: { revalidate: 60, tags: [`post:${slug}`] },
   });
 export function date(value: string | null) {
   return value

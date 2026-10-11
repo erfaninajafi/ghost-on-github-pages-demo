@@ -46,6 +46,7 @@ type Post struct {
 	Title              string     `json:"title"`
 	ContentHtml        string     `json:"content_html"`
 	ContentJson        []byte     `json:"content_json"`
+	CoverImageUrl      *string    `json:"cover_image_url"`
 	Excerpt            string     `json:"excerpt"`
 	ReadingTimeMinutes int32      `json:"reading_time_minutes"`
 	ViewsCount         int64      `json:"views_count"`
@@ -67,10 +68,11 @@ type Tag struct {
 }
 
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	Name         string    `json:"name"`
-	PasswordHash string    `json:"password_hash"`
-	Role         string    `json:"role"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           string     `json:"id"`
+	Email        string     `json:"email"`
+	Name         string     `json:"name"`
+	PasswordHash string     `json:"password_hash"`
+	Role         string     `json:"role"`
+	DisabledAt   *time.Time `json:"disabled_at"`
+	CreatedAt    time.Time  `json:"created_at"`
 }

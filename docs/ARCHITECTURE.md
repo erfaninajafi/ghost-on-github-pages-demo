@@ -72,7 +72,7 @@ sqlc generate
 
 ### احراز هویت
 
-- `POST /auth/signup`: `{name,email,password,invite_code}`؛ نام ۲–۱۰۰ حرف و رمز ۱۲–۷۲ **بایت**. کد دعوت معتبر الزامی و نقش خروجی همواره `author` است.
+- `POST /auth/signup`: `{email,password}`؛ ثبت‌نام عمومی بدون دعوت، رمز ۱۲–۷۲ **بایت** و نقش خروجی همواره `author` است. `name` اختیاری با طول ۲–۱۰۰ حرف است؛ در صورت نبودن، نام نمایشی «نویسنده» ذخیره می‌شود.
 - `POST /auth/login`: `{email,password}`؛ پاسخ User و کوکی `ea_session`.
 - `POST /auth/logout`: حذف کوکی، پاسخ 204.
 - `GET /auth/me`: مشخصات نشست نویسنده/مدیر؛ hash هرگز برگردانده نمی‌شود.
@@ -93,13 +93,22 @@ JWT امضاشده با HS256، audience و issuer ثابت و انقضای ۸ �
 
 ### پنل تحریریه
 
-- `GET /studio/posts`: تا ۲۰۰ مقالهٔ آخر نویسنده؛ مدیر همهٔ نویسندگان را می‌بیند.
-- `POST /studio/posts`: ایجاد یا ویرایش. `id` خالی یعنی ایجاد؛ ID موجود فقط برای مالک یا مدیر قابل ویرایش است. فیلدها: `id,category_id,slug,title,content_html,content_json,excerpt,status,tag_ids`.
-- `GET /studio/comments?status=pending`: تا ۲۰۰ نظر قدیمی در وضعیت pending (پیش‌فرض)، approved یا spam؛ نویسنده فقط مقاله‌های خود و مدیر همه را می‌بیند.
-- `PATCH /studio/comments/{id}`: `{status:"approved"}` یا `spam` یا `pending`. مالک مقاله/مدیر مجاز است. تغییر همزمان با قفل رکورد سریالی می‌شود.
+- `GET /studio/posts`: تا ۲۰۰ مقالهٔ آخر و فعال نویسنده؛ مدیر مقاله‌های همهٔ حساب‌ها و آرشیو را می‌بیند. مقاله‌های حذف‌شده در `GET /studio/posts?status=deleted` فقط برای مدیر دریافت می‌شوند.
+- `POST /studio/posts`: ایجاد یا ویرایش. `id` خالی یعنی ایجاد؛ ID موجود فقط برای مالک یا مدیر قابل ویرایش است. فیلدها: `id,category_id,slug,title,content_format,content_text,content_html,content_json,cover_image_url,excerpt,status,tag_ids`.
+- `GET /studio/comments?status=pending`: تا ۲۰۰ نظر قدیمی در وضعیت pending (پیش‌فرض)، approved یا spam؛ فقط مدیر مجاز است و نظرات همهٔ مقاله‌ها را می‌بیند.
+- `PATCH /studio/comments/{id}`: `{status:"approved"}` یا `spam` یا `pending`. فقط مدیر مجاز است. تغییر همزمان با قفل رکورد سریالی می‌شود.
+- `POST /studio/media`: مدیر و نویسنده؛ multipart/form-data با یک فایل `image`. PNG/JPEG، حداکثر ۵MiB و ۱۲ میلیون پیکسل؛ خروجی 201 `{url,width,height}`. نام فایل UUID در namespace حساب است؛ هیچ filename ارسالی کلاینت استفاده نمی‌شود.
+- `GET /media/{owner}/{file}`: خواندن تصویر ثابت و عمومی با MIME مشخص، nosniff و کش immutable. رسانهٔ پیش‌نویس نیز با داشتن URL قابل خواندن است؛ این مسیر برای رسانهٔ محرمانه نیست.
+- `GET /studio/authors?page=1&limit=20`: فقط مدیر؛ خروجی `{items,total,page,limit}` و حساب‌های author؛ limit حداکثر ۵۰. hash رمز در JSON وجود ندارد.
+- `POST /studio/authors`: فقط مدیر؛ `{name,email,password}`، خروجی 201 حساب نویسنده بدون تغییر کوکی نشست مدیر.
+- `PATCH /studio/authors/{id}`: فقط مدیر؛ `{name,email,disabled}`. شرط `role='author'` در SQL مانع تغییر حساب مدیر می‌شود؛ غیرفعال‌کردن حساب با `disabled_at` و بررسی آن در login و هر درخواست JWT اعمال می‌شود.
+- `PATCH /studio/posts/{id}/status`: فقط مدیر؛ `{status:"archived"}` یا `{status:"draft"}`. آرشیو از نمایش عمومی خارج می‌شود؛ بازگردانی همواره پیش‌نویس است.
+- `DELETE /studio/posts/{id}`: فقط مدیر؛ خروجی 204، حذف نرم با status=deleted؛ محتوا، کامنت‌ها و برچسب‌ها حفظ می‌شوند.
 - `POST /studio/taxonomy/categories` و `/studio/taxonomy/tags`: `{name,slug}`؛ فقط مدیر.
 
-slug از حروف Unicode، عدد و خط تیره تشکیل می‌شود؛ عنوان حداکثر ۲۴۰ حرف، خلاصه ۵۰۰ حرف، HTML حداکثر ۵۰۰ هزار بایت و تگ‌ها حداکثر ۲۰ شناسهٔ یکتا هستند. محتوای HTML با Bluemonday پاک‌سازی می‌شود. انتشار متن خالی بعد از پاک‌سازی رد می‌شود. زمان مطالعه با ۲۰۰ واژه در دقیقه و حداقل ۱ دقیقه محاسبه می‌شود. تغییر status به draft دسترسی عمومی API را قطع می‌کند؛ کش ISR ممکن است تا دور بازاعتبارسنجی بعدی نسخهٔ قبلی را نشان دهد.
+نقش نویسنده به ایجاد، ویرایش و انتشار مقالهٔ خودش محدود است؛ مدیریت نویسندگان، نظرات، taxonomy، آرشیو، حذف و سطل حذف مخصوص مدیر است. ایجاد مقاله توسط مدیر، author_id خود مدیر را ثبت می‌کند؛ ویرایش مقالهٔ دیگران مالکیت آن را تغییر نمی‌دهد. تغییر وضعیت در یک UPDATE اتمیک انجام و revision کش invalid می‌شود. SavePost در SQL اجازهٔ تغییر رکورد archived/deleted را نمی‌دهد تا فرم قدیمی یا رقابت درخواست‌ها نتواند تصمیم مدیر را دور بزند. migration شمارهٔ ۲ بدون حذف داده، وضعیت‌ها و disabled_at را اضافه می‌کند؛ rollback وضعیت‌های جدید را به draft خصوصی تبدیل می‌کند.
+
+slug از حروف Unicode، عدد و خط تیره تشکیل می‌شود؛ عنوان حداکثر ۲۴۰ حرف، خلاصه ۵۰۰ حرف، HTML حداکثر ۵۰۰ هزار بایت و تگ‌ها حداکثر ۲۰ شناسهٔ یکتا هستند. `content_format` برابر `plain_text` یا `html` است؛ نبودن آن برای سازگاری با کلاینت‌های قبلی HTML در نظر گرفته می‌شود. در حالت plain_text ورودی `content_text` توسط سرور escape و به پاراگراف/شکست خط تبدیل می‌شود. در حالت html ورودی `content_html` با Bluemonday پاک‌سازی می‌شود. برای قالب صریح، سرور `content_json={version:1,format,content}` را می‌سازد و به metadata ارسالی کلاینت اعتماد نمی‌کند؛ source متن ساده و HTML پاک‌سازی‌شده برای ویرایش بعدی نگهداری می‌شوند. انتشار متن خالی بعد از پاک‌سازی رد می‌شود. زمان مطالعه با ۲۰۰ واژه در دقیقه و حداقل ۱ دقیقه محاسبه می‌شود. تغییر status به draft دسترسی عمومی API را قطع می‌کند؛ کش ISR ممکن است تا دور بازاعتبارسنجی بعدی نسخهٔ قبلی را نشان دهد.
 
 ## درخت نظرات
 
@@ -132,3 +141,9 @@ rate limit با Lua اتمیک روی Redis: خواندن ۱۸۰، نوشتن ۲
 تست‌ها مجوز انتشار، نقش signup، hash رمز، XSS، JWT، Origin، JSON سختگیرانه، درخت و عمق reply را پوشش می‌دهند. تست PostgreSQL در schema جداگانه: citext، فیلتر فارسی، rollback تگ، تأیید همزمان و صف ایمیل، مخفی شدن شاخه، FK بین مقالات و افزایش بازدید همزمان. Redis نرخ و expiry واقعی تست می‌شود. تست‌های وب escape شدن HTML، JSON-LD و RSS را بررسی می‌کنند.
 
 لاگ ساختاریافتهٔ JSON شامل request ID، نام route، method، status و مدت است؛ متن مقاله، ایمیل و رمز لاگ نمی‌شود. `/healthz` زنده بودن پروسه و `/readyz` اتصال PostgreSQL و Redis را بررسی می‌کند. timeoutهای HTTP، سقف اتصال pool و graceful shutdown تنظیم شده‌اند.
+
+## تصویر جلد و بازاعتبارسنجی انتشار
+
+Migration شمارهٔ ۳ ستون nullable `cover_image_url` را اضافه می‌کند؛ مقاله بدون تصویر مجاز است. Use Case با DecodeConfig نوع و ابعاد واقعی را کنترل و فایل را مجدداً PNG/JPEG encode می‌کند تا metadata و محتوای اضافه باقی نماند. حداکثر دو پردازش تصویر همزمان در هر API انجام می‌شود. Repository `LocalMedia` فایل را با نام تولیدشده، نوشتن موقت و rename اتمیک در `UPLOAD_DIR` می‌گذارد. Compose از volume مستقل `uploads_data` استفاده می‌کند؛ تعویض image یا restart فایل‌ها را حذف نمی‌کند. Save وجود فایل را کنترل می‌کند و نویسنده نمی‌تواند URL آپلود حساب دیگری را به مقالهٔ خودش متصل کند؛ ادمین می‌تواند جلد مقالهٔ دیگران را تغییر دهد. برداشتن جلد فقط ارجاع دیتابیس را پاک می‌کند، نه فایل را؛ پاک‌سازی رسانهٔ بدون ارجاع نیازمند سیاست نگهداری و بررسی نسخه‌های پشتیبان است.
+
+نامک مسیر Next.js پیش از ساخت URL API یک بار decode و اعتبارسنجی می‌شود؛ سپس API URL فقط یک بار encode می‌شود. این از 404 نامک فارسی بر اثر double encoding جلوگیری می‌کند. بعد از Save یا تغییر status، API سرویس `SiteCache` را برای نامک قبلی/جدید صدا می‌زند. وب‌هوک داخلی `POST /api/revalidate` با `REVALIDATION_SECRET` مستقل و مقایسهٔ ثابت‌زمان حفاظت می‌شود؛ دادهٔ fetch با tagهای posts و post:slug و مسیرهای مقاله، صفحهٔ اصلی، sitemap و RSS بازاعتبارسنجی می‌شوند. این راز هرگز NEXT_PUBLIC نیست. قطع وب‌هوک، ذخیرهٔ موفق دیتابیس را ناموفق گزارش نمی‌کند؛ هشدار در لاگ و ISR دوره‌ای مسیر پشتیبان‌اند. عکس جلد در کارت، Article، OpenGraph، Twitter و JSON-LD استفاده می‌شود و Next/Image اندازه‌های مناسب را تولید می‌کند.

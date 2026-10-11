@@ -1,6 +1,7 @@
 package repository_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"expertsacademy/blog/internal/domain"
@@ -10,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"image"
+	"image/png"
 	"io"
 	"log/slog"
 	"os"
@@ -70,12 +73,12 @@ func TestPostgresPublicationCommentsAndOutbox(t *testing.T) {
 	}
 	cache := platform.Redis{Client: redis.NewClient(options)}
 	defer cache.Client.Close()
-	s := &usecase.Service{Repo: repo, Cache: cache, Invite: "integration-invite", SiteURL: "https://blog.expertsacademy.ir", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	author, e := s.Signup(ctx, "نویسنده", "author@example.com", "integration-password-123", "integration-invite")
+	s := &usecase.Service{Repo: repo, Cache: cache, SiteURL: "https://blog.expertsacademy.ir", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	author, e := s.Signup(ctx, "", "author@example.com", "integration-password-123")
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.Signup(ctx, "نویسنده", "AUTHOR@example.com", "integration-password-123", "integration-invite"); !errors.Is(e, domain.ErrConflict) {
+	if _, e = s.Signup(ctx, "نویسنده", "AUTHOR@example.com", "integration-password-123"); !errors.Is(e, domain.ErrConflict) {
 		t.Fatal("citext uniqueness", e)
 	}
 	logged, e := s.Login(ctx, "AUTHOR@example.com", "integration-password-123")
@@ -133,6 +136,30 @@ func TestPostgresPublicationCommentsAndOutbox(t *testing.T) {
 	if e != nil || p.Title != original {
 		t.Fatal("post/tag transaction did not rollback", e)
 	}
+	plainInput := usecase.PostInput{Title: "مقاله متنی", Slug: "plain-text", Status: "published", ContentFormat: "plain_text", ContentText: "خط اول <b>متن</b>\n\nخط دوم"}
+	plainPost, err := s.Save(ctx, author, plainInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.PostByID(ctx, plainPost.ID)
+	if err != nil || string(stored.ContentJSON) == "{}" || !strings.Contains(stored.ContentHTML, "&lt;b&gt;") {
+		t.Fatal("plain text persistence", err)
+	}
+	s.Media = repository.LocalMedia{Root: t.TempDir()}
+	var imageData bytes.Buffer
+	if err := png.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	uploaded, err := s.UploadImage(ctx, author, &imageData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainInput.CoverImageURL = &uploaded.URL
+	plainInput.ID = stored.ID
+	resaved, err := s.Save(ctx, author, plainInput)
+	if err != nil || resaved.ContentHTML != stored.ContentHTML || resaved.CoverImageURL == nil || *resaved.CoverImageURL != uploaded.URL {
+		t.Fatal("plain text round trip", err)
+	}
 	root, e := s.AddComment(ctx, p.ID, nil, usecase.CommentInput{AuthorName: "مهمان", AuthorEmail: "guest@example.com", Content: "نظر نخست"})
 	if e != nil {
 		t.Fatal(e)
@@ -144,7 +171,7 @@ func TestPostgresPublicationCommentsAndOutbox(t *testing.T) {
 	if _, e = s.Moderate(ctx, domain.User{ID: uuid.NewString(), Role: "author"}, root.ID, "approved"); !errors.Is(e, domain.ErrForbidden) {
 		t.Fatal("foreign moderator", e)
 	}
-	if _, e = s.Moderate(ctx, author, root.ID, "approved"); e != nil {
+	if _, e = s.Moderate(ctx, admin, root.ID, "approved"); e != nil {
 		t.Fatal(e)
 	}
 	reply, e := s.AddComment(ctx, p.ID, nil, usecase.CommentInput{ParentID: &root.ID, AuthorName: "پاسخ‌دهنده", AuthorEmail: "reply@example.com", Content: "پاسخ آموزشی"})
@@ -157,7 +184,7 @@ func TestPostgresPublicationCommentsAndOutbox(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := s.Moderate(ctx, author, reply.ID, "approved")
+			_, err := s.Moderate(ctx, admin, reply.ID, "approved")
 			if err != nil {
 				failures <- err
 			}
@@ -187,7 +214,7 @@ func TestPostgresPublicationCommentsAndOutbox(t *testing.T) {
 	if e = repo.CompleteEmail(ctx, first.ID); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.Moderate(ctx, author, root.ID, "spam"); e != nil {
+	if _, e = s.Moderate(ctx, admin, root.ID, "spam"); e != nil {
 		t.Fatal(e)
 	}
 	tree, e = s.Comments(ctx, p.ID)
@@ -277,6 +304,40 @@ func TestMigrationRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = pool.Exec(ctx, string(up)); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile("../../db/migrations/000002_editorial_permissions.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, string(second)); err != nil {
+		t.Fatal(err)
+	}
+	rollback, err := os.ReadFile("../../db/migrations/000002_editorial_permissions.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, string(rollback)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, string(second)); err != nil {
+		t.Fatal(err)
+	}
+	coverUp, err := os.ReadFile("../../db/migrations/000003_post_cover.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, string(coverUp)); err != nil {
+		t.Fatal(err)
+	}
+	coverDown, err := os.ReadFile("../../db/migrations/000003_post_cover.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, string(coverDown)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, string(coverUp)); err != nil {
 		t.Fatal(err)
 	}
 	var count int

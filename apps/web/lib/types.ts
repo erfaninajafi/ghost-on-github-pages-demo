@@ -6,15 +6,17 @@ export interface Taxon {
 export interface Post {
   id: string;
   author_id: string;
+  author_name?: string;
   category_id: string | null;
   slug: string;
   title: string;
   content_html: string;
   content_json: unknown;
+  cover_image_url: string | null;
   excerpt: string;
   reading_time_minutes: number;
   views_count: number;
-  status: "draft" | "published";
+  status: "draft" | "published" | "archived" | "deleted";
   published_at: string | null;
   created_at: string;
   updated_at: string;
@@ -41,6 +43,13 @@ export interface User {
   name: string;
   email: string;
   role: "admin" | "author" | "reader";
+  disabled_at: string | null;
+}
+export interface AuthorPage {
+  items: User[];
+  total: number;
+  page: number;
+  limit: number;
 }
 export interface Taxonomy {
   categories: Taxon[];

@@ -1,6 +1,7 @@
 import { cache } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import Image from "next/image";
 import { notFound } from "next/navigation";
 import {
   APIError,
@@ -11,6 +12,8 @@ import {
   siteURL,
 } from "@/lib/api";
 import { jsonLD, safeHTML } from "@/lib/seo";
+import { readEditorContent } from "@/lib/editor";
+import { articleSlug } from "@/lib/article-path";
 import { Trending } from "@/components/post-card";
 import { Comments } from "@/components/comments";
 import { ViewCounter } from "@/components/view-counter";
@@ -19,8 +22,10 @@ export async function generateStaticParams() {
   return [];
 }
 const load = cache(async (slug: string) => {
+  const canonical = articleSlug(slug);
+  if (!canonical) notFound();
   try {
-    return await getPost(slug);
+    return await getPost(canonical);
   } catch (e) {
     if (e instanceof APIError && e.status === 404) notFound();
     throw e;
@@ -45,13 +50,15 @@ export async function generateMetadata({
       url,
       publishedTime: p.published_at || undefined,
       modifiedTime: p.updated_at,
-      images: [{ url: "/og.png", width: 1200, height: 630 }],
+      images: p.cover_image_url
+        ? [{ url: p.cover_image_url, alt: p.title }]
+        : [{ url: "/og.png", width: 1200, height: 630 }],
     },
     twitter: {
       card: "summary_large_image",
       title: p.title,
       description: p.excerpt,
-      images: ["/og.png"],
+      images: [p.cover_image_url || "/og.png"],
     },
   };
 }
@@ -77,7 +84,7 @@ export default async function Article({
       name: "ExpertsAcademy",
       url: siteURL,
     },
-    image: `${siteURL}/og.png`,
+    image: `${siteURL}${post.cover_image_url || "/og.png"}`,
   };
   return (
     <div className="container article-layout">
@@ -100,8 +107,19 @@ export default async function Article({
             <span>{number(post.reading_time_minutes)} دقیقه مطالعه</span>
           </div>
         </header>
+        {post.cover_image_url && (
+          <Image
+            className="article-cover"
+            src={post.cover_image_url}
+            alt={post.title}
+            width={1200}
+            height={675}
+            sizes="(max-width: 900px) 100vw, 850px"
+            priority
+          />
+        )}
         <div
-          className="prose-content"
+          className={`prose-content${readEditorContent(post).content_format === "plain_text" ? " plain-text" : ""}`}
           dangerouslySetInnerHTML={{ __html: safeHTML(post.content_html) }}
         />
         <div className="tag-list">
@@ -121,7 +139,7 @@ export default async function Article({
           <a href="#comments">پیوستن به گفت‌وگو ←</a>
         </div>
       </aside>
-      <ViewCounter slug={slug} />
+      <ViewCounter slug={post.slug} />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: jsonLD(structured) }}

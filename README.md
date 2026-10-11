@@ -13,20 +13,20 @@ docker compose up --build -d
 
 مجله: <http://localhost:3000> — پنل نویسندگان: <http://localhost:3000/studio>
 
-اسکریپت آغازین `.env` را با چهار راز تصادفی مستقل می‌سازد و فایل موجود را تغییر نمی‌دهد. Migration پیش از API اجرا می‌شود. داده‌ها در volume پایدار نگهداری می‌شوند؛ PostgreSQL و Redis پورت عمومی ندارند. محتوای آزمایشی و حساب پیش‌فرض در دیتابیس ایجاد نمی‌شود.
+اسکریپت آغازین `.env` را با چهار راز تصادفی مستقل می‌سازد و تنظیمات موجود را حفظ می‌کند؛ برای نسخه‌های قبلی، فقط راز جدید `REVALIDATION_SECRET` را در صورت نبودن اضافه می‌کند. Migration پیش از API اجرا می‌شود. دیتابیس و تصویرهای آپلودشده در volumeهای پایدار جدا نگهداری می‌شوند؛ PostgreSQL و Redis پورت عمومی ندارند. محتوای آزمایشی و حساب پیش‌فرض در دیتابیس ایجاد نمی‌شود.
 
 ## ایجاد مدیر اول
 
 ```bash
-export ADMIN_EMAIL='admin@expertsacademy.ir'
-export ADMIN_NAME='مدیر آکادمی'
+export ADMIN_EMAIL='erfan.najafi8213@gmail.com'
+export ADMIN_NAME='Academy Admin'
 read -rs -p 'Admin password (12–72 bytes): ' ADMIN_PASSWORD
 export ADMIN_PASSWORD
 docker compose run --rm -e ADMIN_EMAIL -e ADMIN_NAME -e ADMIN_PASSWORD --entrypoint admin api
 unset ADMIN_PASSWORD
 ```
 
-سپس وارد پنل شوید. نویسندگان با `AUTHOR_INVITE_CODE` موجود در `.env` ثبت‌نام می‌کنند؛ ثبت‌نام عمومی نقش مدیر نمی‌سازد. از پنل، دسته و برچسب بسازید، مقاله بنویسید و نظرات را تأیید کنید.
+سپس وارد پنل شوید. نویسندگان تنها با ایمیل و رمز عبور ثبت‌نام می‌کنند؛ ثبت‌نام عمومی نقش مدیر نمی‌سازد. از پنل، دسته و برچسب بسازید، مقاله بنویسید و نظرات را تأیید کنید.
 
 ## ساختار
 

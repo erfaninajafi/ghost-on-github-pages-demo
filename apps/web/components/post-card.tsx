@@ -1,22 +1,36 @@
 import Link from "next/link";
+import Image from "next/image";
+import { articlePath } from "@/lib/article-path";
 import { date, number } from "@/lib/api";
 import type { Post } from "@/lib/types";
 export function PostCard({ post, index = 0 }: { post: Post; index?: number }) {
   return (
     <article className="post-card">
       <Link
-        href={`/blog/${post.slug}`}
+        href={articlePath(post.slug)}
         className={`card-art art-${index % 3}`}
         aria-hidden="true"
         tabIndex={-1}
       >
-        <span className="art-grid" />
-        <span className="art-word">
-          {["دانش", "تجربه", "آینده"][index % 3]}
-        </span>
-        <span className="art-label" dir="ltr">
-          EXPERTS / INSIGHTS
-        </span>
+        {post.cover_image_url ? (
+          <Image
+            src={post.cover_image_url}
+            alt=""
+            fill
+            sizes="(max-width: 600px) 100vw, (max-width: 1100px) 50vw, 400px"
+            className="card-cover"
+          />
+        ) : (
+          <>
+            <span className="art-grid" />
+            <span className="art-word">
+              {["دانش", "تجربه", "آینده"][index % 3]}
+            </span>
+            <span className="art-label" dir="ltr">
+              EXPERTS / INSIGHTS
+            </span>
+          </>
+        )}
       </Link>
       <div className="card-body">
         <p className="eyebrow">
@@ -24,7 +38,7 @@ export function PostCard({ post, index = 0 }: { post: Post; index?: number }) {
           دقیقه
         </p>
         <h2>
-          <Link href={`/blog/${post.slug}`}>{post.title}</Link>
+          <Link href={articlePath(post.slug)}>{post.title}</Link>
         </h2>
         <p className="muted line-clamp-3">{post.excerpt}</p>
         <div className="card-footer">
@@ -49,7 +63,7 @@ export function Trending({ posts }: { posts: Post[] }) {
           <Link
             className="trending-item"
             key={post.id}
-            href={`/blog/${post.slug}`}
+            href={articlePath(post.slug)}
           >
             <span className="rank">{number(i + 1).padStart(2, "۰")}</span>
             <div>

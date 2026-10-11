@@ -8,6 +8,7 @@ CREATE TABLE users (
  name text NOT NULL CHECK (char_length(name) BETWEEN 2 AND 100),
  password_hash text NOT NULL,
  role text NOT NULL DEFAULT 'reader' CHECK (role IN ('admin','author','reader')),
+ disabled_at timestamptz,
  created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE categories (
@@ -26,10 +27,11 @@ CREATE TABLE posts (
  title text NOT NULL CHECK (char_length(title) BETWEEN 1 AND 240),
  content_html text NOT NULL DEFAULT '',
  content_json jsonb NOT NULL DEFAULT '{}',
+ cover_image_url text,
  excerpt text NOT NULL DEFAULT '' CHECK (char_length(excerpt) <= 500),
  reading_time_minutes integer NOT NULL DEFAULT 1 CHECK (reading_time_minutes > 0),
  views_count bigint NOT NULL DEFAULT 0 CHECK (views_count >= 0),
- status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published')),
+ status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published','archived','deleted')),
  published_at timestamptz,
  created_at timestamptz NOT NULL DEFAULT now(),
  updated_at timestamptz NOT NULL DEFAULT now(),

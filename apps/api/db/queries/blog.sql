@@ -4,6 +4,14 @@ INSERT INTO users(email,name,password_hash,role) VALUES($1,$2,$3,$4) RETURNING *
 SELECT * FROM users WHERE email=$1;
 -- name: UserByID :one
 SELECT * FROM users WHERE id=$1;
+-- name: ListAuthors :many
+SELECT * FROM users WHERE role='author' ORDER BY created_at DESC,id LIMIT $1 OFFSET $2;
+-- name: CountAuthors :one
+SELECT count(*) FROM users WHERE role='author';
+-- name: UpdateAuthor :one
+UPDATE users SET name=$2,email=$3,
+ disabled_at=CASE WHEN sqlc.arg(disabled)::boolean THEN COALESCE(disabled_at,now()) ELSE NULL END
+WHERE id=$1 AND role='author' RETURNING *;
 -- name: ListPosts :many
 SELECT p.* FROM posts p
 WHERE p.status='published' AND p.published_at<=now()
@@ -26,11 +34,19 @@ SELECT * FROM posts WHERE id=$1;
 -- name: IncrementViews :one
 UPDATE posts SET views_count=views_count+1 WHERE id=$1 AND status='published' RETURNING views_count;
 -- name: OwnPosts :many
-SELECT * FROM posts WHERE (sqlc.arg(is_admin)::boolean OR author_id=sqlc.arg(author_id)) ORDER BY updated_at DESC,id LIMIT 200;
+SELECT sqlc.embed(p),u.name AS author_name FROM posts p JOIN users u ON u.id=p.author_id
+WHERE p.status<>'deleted' AND (sqlc.arg(is_admin)::boolean OR (p.author_id=sqlc.arg(author_id) AND p.status<>'archived')) ORDER BY p.updated_at DESC,p.id LIMIT 200;
+-- name: DeletedPosts :many
+SELECT sqlc.embed(p),u.name AS author_name FROM posts p JOIN users u ON u.id=p.author_id
+WHERE p.status='deleted' ORDER BY p.updated_at DESC,p.id LIMIT 200;
+-- name: ChangePostStatus :one
+UPDATE posts SET status=sqlc.arg(new_status)::text,updated_at=now()
+WHERE id=$1 AND (sqlc.arg(new_status)::text IN ('deleted','draft') OR status<>'deleted') RETURNING *;
 -- name: SavePost :one
-INSERT INTO posts(id,author_id,category_id,slug,title,content_html,content_json,excerpt,reading_time_minutes,status,published_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CASE WHEN $10='published' THEN now() ELSE NULL END)
-ON CONFLICT(id) DO UPDATE SET category_id=EXCLUDED.category_id,slug=EXCLUDED.slug,title=EXCLUDED.title,content_html=EXCLUDED.content_html,content_json=EXCLUDED.content_json,excerpt=EXCLUDED.excerpt,reading_time_minutes=EXCLUDED.reading_time_minutes,status=EXCLUDED.status,published_at=CASE WHEN EXCLUDED.status='published' THEN COALESCE(posts.published_at,now()) ELSE posts.published_at END,updated_at=now()
+INSERT INTO posts(id,author_id,category_id,slug,title,content_html,content_json,excerpt,reading_time_minutes,status,published_at,cover_image_url)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CASE WHEN $10='published' THEN now() ELSE NULL END,$11)
+ON CONFLICT(id) DO UPDATE SET category_id=EXCLUDED.category_id,slug=EXCLUDED.slug,title=EXCLUDED.title,content_html=EXCLUDED.content_html,content_json=EXCLUDED.content_json,excerpt=EXCLUDED.excerpt,reading_time_minutes=EXCLUDED.reading_time_minutes,status=EXCLUDED.status,cover_image_url=EXCLUDED.cover_image_url,published_at=CASE WHEN EXCLUDED.status='published' THEN COALESCE(posts.published_at,now()) ELSE posts.published_at END,updated_at=now()
+WHERE posts.status NOT IN ('archived','deleted') AND posts.author_id=EXCLUDED.author_id
 RETURNING *;
 -- name: ClearPostTags :exec
 DELETE FROM post_tags WHERE post_id=$1;

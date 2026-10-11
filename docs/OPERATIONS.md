@@ -31,7 +31,7 @@ SMTP_PORT=587
 ```
 
 ۴. SMTP_HOST، SMTP_USERNAME، SMTP_PASSWORD و SMTP_FROM را با اطلاعات سرویس سازمان پر کنید. From باید مطابق سیاست سرویس و SPF/DKIM/DMARC دامنهٔ ایمیل باشد. این آداپتور STARTTLS روی 587 را پشتیبانی می‌کند؛ implicit TLS روی 465 پشتیبانی نمی‌شود.
-۵. JWT_SECRET حداقل ۳۲ بایت و AUTHOR_INVITE_CODE را مستقل و تصادفی نگه دارید. کد دعوت خالی ثبت‌نام را می‌بندد.
+۵. JWT_SECRET را مستقل، تصادفی و حداقل ۳۲ بایت نگه دارید. ثبت‌نام نویسندگان با ایمیل و رمز عبور و بدون دعوت انجام می‌شود.
 ۶. `docker compose up --build -d` را اجرا کنید. SITE_URL در خروجی client وارد می‌شود؛ تغییر آن نیازمند rebuild وب است.
 ۷. مدیر اول را مطابق README بسازید، یک مقاله منتشر کنید، نظر مهمان و reply را تأیید و تحویل واقعی هر دو ایمیل را بررسی کنید.
 ۸. سلامت، backup و هشدار صف ایمیل را به ابزار مانیتورینگ سازمان متصل کنید. این مخزن DNS یا حساب SMTP شما را خودکار تغییر نمی‌دهد.
@@ -109,3 +109,28 @@ CI سرویس‌های PostgreSQL/Redis جدا ایجاد می‌کند و بع�
 برای حذف اضطراری نسخهٔ cacheشده پس از draft کردن مقاله، `docker compose up -d --force-recreate web` cache محلی آن container را از نو می‌سازد. این کار را بعد از اطمینان از وضعیت PostgreSQL انجام دهید. در استقرار چندگرهی، تمام replicaها باید refresh شوند.
 
 برای بررسی وابستگی‌ها، `npm audit` و ابزار `govulncheck ./...` را در CI امنیتی سازمان اجرا کنید و releaseهای امنیتی Next 15 را دنبال کنید. نسخه‌ها و lockfileها در مخزن ثبت شده‌اند؛ imageهای پایه در استقرار با حساسیت بالا بهتر است پس از تأیید به digest قفل شوند.
+
+## خطای password authentication failed در migrate
+
+رمز `POSTGRES_PASSWORD` فقط هنگام ساخت volume جدید توسط image PostgreSQL اعمال می‌شود. تغییر `.env` یا بازسازی کانتینر، رمز نقش موجود در دیتابیس را تغییر نمی‌دهد. اگر migrate با این خطا متوقف شد، ابتدا مطمئن شوید تنظیمات فعلی همان رمز موردنظر شماست. برای هماهنگ کردن نقش محلی با رمز فعلی کانتینر، بدون حذف داده‌ها:
+
+```bash
+docker compose exec -T postgres sh -c 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+\getenv configured_user POSTGRES_USER
+\getenv configured_password POSTGRES_PASSWORD
+SELECT format('ALTER ROLE %I PASSWORD %L', :'configured_user', :'configured_password')
+\gexec
+SQL
+
+docker compose up -d api web gateway
+```
+
+این فرمان مخصوص PostgreSQL محلی همین Compose است و رمز نقش دیتابیس را تغییر می‌دهد؛ اگر مصرف‌کنندهٔ دیگری به همان دیتابیس متصل است، تنظیمات آن نیز باید هماهنگ باشد. رمز در خروجی ترمینال نمایش داده نمی‌شود. healthcheck اکنون با اتصال TCP احرازهویت‌شده تست می‌کند تا اختلاف رمز به‌اشتباه healthy گزارش نشود. برای رفع این خطا نیازی به `down -v`، حذف volume یا force کردن شمارهٔ migration نیست.
+
+## رسانه و کش انتشار
+
+قبل از build نسخهٔ جدید، `bash scripts/init-env.sh` را اجرا کنید؛ در `.env` موجود فقط REVALIDATION_SECRET جدید اضافه می‌شود و رمز PostgreSQL/Redis عوض نمی‌شود. این راز در محیط runtime API و web یکسان و خصوصی است. در اجرای جداگانهٔ Go/Next، UPLOAD_DIR، WEB_REVALIDATION_URL و REVALIDATION_SECRET را مطابق env.example هر برنامه تنظیم کنید.
+
+volume `uploads_data` باید کنار backup PostgreSQL پشتیبان‌گیری و بازیابی شود؛ صرفاً dump دیتابیس شامل فایل‌های عکس نیست. مالک مسیر آپلود در image API کاربر 10001 است. فایل‌ها عمومی و UUID دارند؛ رسانهٔ محرمانه آپلود نکنید. برای چند replica روی میزبان‌های جدا، MediaStore باید با storage مشترک پیاده‌سازی شود؛ volume محلی Docker میان میزبان‌ها مشترک نیست.
+
+اگر انتشار موفق است اما محتوا تازه نمی‌شود، هشدار `site cache revalidation failed` در لاگ API، دسترسی API به WEB_REVALIDATION_URL و برابر بودن REVALIDATION_SECRET در دو سرویس را بررسی کنید. وب‌هوک بدون توکن معتبر 401 می‌دهد.

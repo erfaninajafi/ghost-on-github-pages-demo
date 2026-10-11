@@ -126,3 +126,27 @@ func TestInvalidCookieDoesNotBlockPublicReads(t *testing.T) {
 		}
 	}
 }
+
+func (r authRepo) CreateUser(_ context.Context, u domain.User) (domain.User, error) {
+	u.ID = uuid.NewString()
+	return u, nil
+}
+
+func TestSignupAcceptsOnlyEmailAndPassword(t *testing.T) {
+	s := serverForTest()
+	s.Service = &usecase.Service{Repo: authRepo{}}
+	r := httptest.NewRequest("POST", "/api/v1/auth/signup", strings.NewReader(`{"email":"new-writer@example.com","password":"correct-password-123"}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.signup(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"role":"author"`) || len(w.Result().Cookies()) != 1 {
+		t.Fatalf("signup failed: %d %s", w.Code, w.Body.String())
+	}
+	r = httptest.NewRequest("POST", "/api/v1/auth/signup", strings.NewReader(`{"email":"new-writer@example.com","password":"correct-password-123","role":"admin"}`))
+	r.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	s.signup(w, r)
+	if w.Code != 400 {
+		t.Fatal("client supplied role accepted", w.Code)
+	}
+}

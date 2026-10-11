@@ -2,7 +2,6 @@ package usecase
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,11 +20,12 @@ import (
 )
 
 type Service struct {
-	Repo    domain.Repository
-	Cache   domain.Cache
-	Invite  string
-	SiteURL string
-	Log     *slog.Logger
+	Repo      domain.Repository
+	Cache     domain.Cache
+	SiteURL   string
+	Log       *slog.Logger
+	Media     domain.MediaStore
+	SiteCache domain.SiteCache
 }
 
 var sanitizer = bluemonday.UGCPolicy()
@@ -53,11 +53,11 @@ func ValidSlug(s string) bool {
 func Normalize(s string) string {
 	return strings.NewReplacer("ي", "ی", "ك", "ک").Replace(strings.TrimSpace(s))
 }
-func (s *Service) Signup(ctx context.Context, name, email, password, invite string) (domain.User, error) {
-	if s.Invite == "" || subtle.ConstantTimeCompare([]byte(invite), []byte(s.Invite)) != 1 {
-		return domain.User{}, domain.ErrForbidden
-	}
+func (s *Service) Signup(ctx context.Context, name, email, password string) (domain.User, error) {
 	name = Normalize(name)
+	if name == "" {
+		name = "نویسنده"
+	}
 	email = strings.TrimSpace(email)
 	if !validLength(name, 2, 100) || !validEmail(email) || len(password) < 12 || len(password) > 72 {
 		return domain.User{}, domain.ErrInvalid
@@ -81,7 +81,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (domain.Use
 		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		return domain.User{}, domain.ErrUnauthorized
 	}
-	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) != nil {
+	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) != nil || u.DisabledAt != nil {
 		return domain.User{}, domain.ErrUnauthorized
 	}
 	return u, nil
@@ -153,25 +153,28 @@ func (s *Service) Detail(ctx context.Context, slug string, count bool) (domain.P
 }
 
 type PostInput struct {
-	ID          string          `json:"id"`
-	CategoryID  *string         `json:"category_id"`
-	Slug        string          `json:"slug"`
-	Title       string          `json:"title"`
-	ContentHTML string          `json:"content_html"`
-	ContentJSON json.RawMessage `json:"content_json"`
-	Excerpt     string          `json:"excerpt"`
-	Status      string          `json:"status"`
-	TagIDs      []string        `json:"tag_ids"`
+	ID            string          `json:"id"`
+	CategoryID    *string         `json:"category_id"`
+	Slug          string          `json:"slug"`
+	Title         string          `json:"title"`
+	ContentHTML   string          `json:"content_html"`
+	ContentFormat string          `json:"content_format"`
+	ContentText   string          `json:"content_text"`
+	ContentJSON   json.RawMessage `json:"content_json"`
+	CoverImageURL *string         `json:"cover_image_url"`
+	Excerpt       string          `json:"excerpt"`
+	Status        string          `json:"status"`
+	TagIDs        []string        `json:"tag_ids"`
 }
 
 func (s *Service) Save(ctx context.Context, u domain.User, in PostInput) (domain.Post, error) {
-	if u.Role != "author" && u.Role != "admin" {
+	if (u.Role != "author" && u.Role != "admin") || u.DisabledAt != nil {
 		return domain.Post{}, domain.ErrForbidden
 	}
 	in.Title = Normalize(in.Title)
 	in.Slug = Normalize(in.Slug)
 	in.Excerpt = Normalize(in.Excerpt)
-	if !ValidSlug(in.Slug) || !validLength(in.Title, 1, 240) || !validLength(in.Excerpt, 0, 500) || len(in.ContentHTML) > 500000 || (in.Status != "draft" && in.Status != "published") || len(in.TagIDs) > 20 {
+	if !ValidSlug(in.Slug) || !validLength(in.Title, 1, 240) || !validLength(in.Excerpt, 0, 500) || len(in.ContentHTML) > 500000 || len(in.ContentText) > 500000 || (in.Status != "draft" && in.Status != "published") || len(in.TagIDs) > 20 {
 		return domain.Post{}, domain.ErrInvalid
 	}
 	if in.CategoryID != nil && !ValidID(*in.CategoryID) {
@@ -191,6 +194,7 @@ func (s *Service) Save(ctx context.Context, u domain.User, in PostInput) (domain
 		return domain.Post{}, domain.ErrInvalid
 	}
 	author := u.ID
+	previousSlug := ""
 	if in.ID == "" {
 		in.ID = uuid.NewString()
 	} else {
@@ -205,8 +209,20 @@ func (s *Service) Save(ctx context.Context, u domain.User, in PostInput) (domain
 			return domain.Post{}, domain.ErrForbidden
 		}
 		author = existing.AuthorID
+		previousSlug = existing.Slug
+		if existing.Status == "archived" || existing.Status == "deleted" {
+			return domain.Post{}, domain.ErrConflict
+		}
 	}
-	html := sanitizer.Sanitize(in.ContentHTML)
+	if in.CoverImageURL != nil {
+		if err := s.validateCover(ctx, u, author, *in.CoverImageURL); err != nil {
+			return domain.Post{}, err
+		}
+	}
+	html, contentJSON, e := prepareContent(in)
+	if e != nil {
+		return domain.Post{}, e
+	}
 	plain := bluemonday.StrictPolicy().Sanitize(html)
 	words := len(strings.Fields(plain))
 	if in.Status == "published" && words == 0 {
@@ -216,11 +232,12 @@ func (s *Service) Save(ctx context.Context, u domain.User, in PostInput) (domain
 	if minutes < 1 {
 		minutes = 1
 	}
-	p, e := s.Repo.SavePost(ctx, domain.Post{ID: in.ID, AuthorID: author, CategoryID: in.CategoryID, Slug: in.Slug, Title: in.Title, ContentHTML: html, ContentJSON: in.ContentJSON, Excerpt: in.Excerpt, Status: in.Status, ReadingTimeMinutes: minutes}, in.TagIDs)
+	p, e := s.Repo.SavePost(ctx, domain.Post{ID: in.ID, AuthorID: author, CategoryID: in.CategoryID, Slug: in.Slug, Title: in.Title, ContentHTML: html, ContentJSON: contentJSON, CoverImageURL: in.CoverImageURL, Excerpt: in.Excerpt, Status: in.Status, ReadingTimeMinutes: minutes}, in.TagIDs)
 	if e == nil {
 		if err := s.Cache.Invalidate(ctx); err != nil {
 			s.Log.Warn("cache invalidation failed; TTL bounds staleness", "error", err)
 		}
+		s.revalidateSite(ctx, p.Slug, previousSlug)
 	}
 	return p, e
 }
@@ -315,6 +332,9 @@ func (s *Service) AddComment(ctx context.Context, id string, u *domain.User, in 
 	return s.Repo.AddComment(ctx, domain.Comment{PostID: id, UserID: userID, ParentID: in.ParentID, AuthorName: in.AuthorName, AuthorEmail: in.AuthorEmail, Content: in.Content}, m)
 }
 func (s *Service) Moderate(ctx context.Context, u domain.User, id, status string) (domain.Comment, error) {
+	if u.Role != "admin" || u.DisabledAt != nil {
+		return domain.Comment{}, domain.ErrForbidden
+	}
 	if !ValidID(id) || (status != "approved" && status != "spam" && status != "pending") {
 		return domain.Comment{}, domain.ErrInvalid
 	}
@@ -325,9 +345,6 @@ func (s *Service) Moderate(ctx context.Context, u domain.User, id, status string
 	p, e := s.Repo.PostByID(ctx, c.PostID)
 	if e != nil {
 		return c, e
-	}
-	if u.Role != "admin" && (u.Role != "author" || u.ID != p.AuthorID) {
-		return c, domain.ErrForbidden
 	}
 	var m *domain.Email
 	if status == "approved" && c.ParentID != nil {

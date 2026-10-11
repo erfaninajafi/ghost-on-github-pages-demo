@@ -118,6 +118,39 @@ func (q *Queries) Categories(ctx context.Context) ([]Category, error) {
 	return items, nil
 }
 
+const changePostStatus = `-- name: ChangePostStatus :one
+UPDATE posts SET status=$2::text,updated_at=now()
+WHERE id=$1 AND ($2::text IN ('deleted','draft') OR status<>'deleted') RETURNING id, author_id, category_id, slug, title, content_html, content_json, cover_image_url, excerpt, reading_time_minutes, views_count, status, published_at, created_at, updated_at
+`
+
+type ChangePostStatusParams struct {
+	ID        string `json:"id"`
+	NewStatus string `json:"new_status"`
+}
+
+func (q *Queries) ChangePostStatus(ctx context.Context, arg ChangePostStatusParams) (Post, error) {
+	row := q.db.QueryRow(ctx, changePostStatus, arg.ID, arg.NewStatus)
+	var i Post
+	err := row.Scan(
+		&i.ID,
+		&i.AuthorID,
+		&i.CategoryID,
+		&i.Slug,
+		&i.Title,
+		&i.ContentHtml,
+		&i.ContentJson,
+		&i.CoverImageUrl,
+		&i.Excerpt,
+		&i.ReadingTimeMinutes,
+		&i.ViewsCount,
+		&i.Status,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const claimEmail = `-- name: ClaimEmail :one
 UPDATE email_outbox SET available_at=now()+interval '5 minutes',attempts=attempts+1
 WHERE id=(SELECT id FROM email_outbox WHERE sent_at IS NULL AND available_at<=now() AND attempts<12 ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id, recipient, subject, body, attempts, available_at, sent_at, created_at
@@ -245,6 +278,17 @@ func (q *Queries) CompleteEmail(ctx context.Context, id string) error {
 	return err
 }
 
+const countAuthors = `-- name: CountAuthors :one
+SELECT count(*) FROM users WHERE role='author'
+`
+
+func (q *Queries) CountAuthors(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countAuthors)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countPosts = `-- name: CountPosts :one
 SELECT count(*) FROM posts p WHERE p.status='published' AND p.published_at<=now()
 AND ($1::text='' OR p.category_id IN (SELECT id FROM categories WHERE slug=$1))
@@ -264,7 +308,7 @@ func (q *Queries) CountPosts(ctx context.Context, arg CountPostsParams) (int64, 
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users(email,name,password_hash,role) VALUES($1,$2,$3,$4) RETURNING id, email, name, password_hash, role, created_at
+INSERT INTO users(email,name,password_hash,role) VALUES($1,$2,$3,$4) RETURNING id, email, name, password_hash, role, disabled_at, created_at
 `
 
 type CreateUserParams struct {
@@ -288,9 +332,57 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Name,
 		&i.PasswordHash,
 		&i.Role,
+		&i.DisabledAt,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const deletedPosts = `-- name: DeletedPosts :many
+SELECT p.id, p.author_id, p.category_id, p.slug, p.title, p.content_html, p.content_json, p.cover_image_url, p.excerpt, p.reading_time_minutes, p.views_count, p.status, p.published_at, p.created_at, p.updated_at,u.name AS author_name FROM posts p JOIN users u ON u.id=p.author_id
+WHERE p.status='deleted' ORDER BY p.updated_at DESC,p.id LIMIT 200
+`
+
+type DeletedPostsRow struct {
+	Post       Post   `json:"post"`
+	AuthorName string `json:"author_name"`
+}
+
+func (q *Queries) DeletedPosts(ctx context.Context) ([]DeletedPostsRow, error) {
+	rows, err := q.db.Query(ctx, deletedPosts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DeletedPostsRow{}
+	for rows.Next() {
+		var i DeletedPostsRow
+		if err := rows.Scan(
+			&i.Post.ID,
+			&i.Post.AuthorID,
+			&i.Post.CategoryID,
+			&i.Post.Slug,
+			&i.Post.Title,
+			&i.Post.ContentHtml,
+			&i.Post.ContentJson,
+			&i.Post.CoverImageUrl,
+			&i.Post.Excerpt,
+			&i.Post.ReadingTimeMinutes,
+			&i.Post.ViewsCount,
+			&i.Post.Status,
+			&i.Post.PublishedAt,
+			&i.Post.CreatedAt,
+			&i.Post.UpdatedAt,
+			&i.AuthorName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const enqueueEmail = `-- name: EnqueueEmail :exec
@@ -319,8 +411,45 @@ func (q *Queries) IncrementViews(ctx context.Context, id string) (int64, error) 
 	return views_count, err
 }
 
+const listAuthors = `-- name: ListAuthors :many
+SELECT id, email, name, password_hash, role, disabled_at, created_at FROM users WHERE role='author' ORDER BY created_at DESC,id LIMIT $1 OFFSET $2
+`
+
+type ListAuthorsParams struct {
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
+}
+
+func (q *Queries) ListAuthors(ctx context.Context, arg ListAuthorsParams) ([]User, error) {
+	rows, err := q.db.Query(ctx, listAuthors, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []User{}
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Name,
+			&i.PasswordHash,
+			&i.Role,
+			&i.DisabledAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPosts = `-- name: ListPosts :many
-SELECT p.id, p.author_id, p.category_id, p.slug, p.title, p.content_html, p.content_json, p.excerpt, p.reading_time_minutes, p.views_count, p.status, p.published_at, p.created_at, p.updated_at FROM posts p
+SELECT p.id, p.author_id, p.category_id, p.slug, p.title, p.content_html, p.content_json, p.cover_image_url, p.excerpt, p.reading_time_minutes, p.views_count, p.status, p.published_at, p.created_at, p.updated_at FROM posts p
 WHERE p.status='published' AND p.published_at<=now()
 AND ($1::text='' OR p.category_id IN (SELECT id FROM categories WHERE slug=$1))
 AND ($2::text='' OR EXISTS (SELECT 1 FROM post_tags pt JOIN tags t ON t.id=pt.tag_id WHERE pt.post_id=p.id AND t.slug=$2))
@@ -356,6 +485,7 @@ func (q *Queries) ListPosts(ctx context.Context, arg ListPostsParams) ([]Post, e
 			&i.Title,
 			&i.ContentHtml,
 			&i.ContentJson,
+			&i.CoverImageUrl,
 			&i.Excerpt,
 			&i.ReadingTimeMinutes,
 			&i.ViewsCount,
@@ -443,7 +573,8 @@ func (q *Queries) ModerationComments(ctx context.Context, arg ModerationComments
 }
 
 const ownPosts = `-- name: OwnPosts :many
-SELECT id, author_id, category_id, slug, title, content_html, content_json, excerpt, reading_time_minutes, views_count, status, published_at, created_at, updated_at FROM posts WHERE ($1::boolean OR author_id=$2) ORDER BY updated_at DESC,id LIMIT 200
+SELECT p.id, p.author_id, p.category_id, p.slug, p.title, p.content_html, p.content_json, p.cover_image_url, p.excerpt, p.reading_time_minutes, p.views_count, p.status, p.published_at, p.created_at, p.updated_at,u.name AS author_name FROM posts p JOIN users u ON u.id=p.author_id
+WHERE p.status<>'deleted' AND ($1::boolean OR (p.author_id=$2 AND p.status<>'archived')) ORDER BY p.updated_at DESC,p.id LIMIT 200
 `
 
 type OwnPostsParams struct {
@@ -451,30 +582,37 @@ type OwnPostsParams struct {
 	AuthorID string `json:"author_id"`
 }
 
-func (q *Queries) OwnPosts(ctx context.Context, arg OwnPostsParams) ([]Post, error) {
+type OwnPostsRow struct {
+	Post       Post   `json:"post"`
+	AuthorName string `json:"author_name"`
+}
+
+func (q *Queries) OwnPosts(ctx context.Context, arg OwnPostsParams) ([]OwnPostsRow, error) {
 	rows, err := q.db.Query(ctx, ownPosts, arg.IsAdmin, arg.AuthorID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Post{}
+	items := []OwnPostsRow{}
 	for rows.Next() {
-		var i Post
+		var i OwnPostsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.AuthorID,
-			&i.CategoryID,
-			&i.Slug,
-			&i.Title,
-			&i.ContentHtml,
-			&i.ContentJson,
-			&i.Excerpt,
-			&i.ReadingTimeMinutes,
-			&i.ViewsCount,
-			&i.Status,
-			&i.PublishedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.Post.ID,
+			&i.Post.AuthorID,
+			&i.Post.CategoryID,
+			&i.Post.Slug,
+			&i.Post.Title,
+			&i.Post.ContentHtml,
+			&i.Post.ContentJson,
+			&i.Post.CoverImageUrl,
+			&i.Post.Excerpt,
+			&i.Post.ReadingTimeMinutes,
+			&i.Post.ViewsCount,
+			&i.Post.Status,
+			&i.Post.PublishedAt,
+			&i.Post.CreatedAt,
+			&i.Post.UpdatedAt,
+			&i.AuthorName,
 		); err != nil {
 			return nil, err
 		}
@@ -487,7 +625,7 @@ func (q *Queries) OwnPosts(ctx context.Context, arg OwnPostsParams) ([]Post, err
 }
 
 const popularPosts = `-- name: PopularPosts :many
-SELECT id, author_id, category_id, slug, title, content_html, content_json, excerpt, reading_time_minutes, views_count, status, published_at, created_at, updated_at FROM posts WHERE status='published' AND published_at<=now() ORDER BY views_count DESC,published_at DESC,id LIMIT 6
+SELECT id, author_id, category_id, slug, title, content_html, content_json, cover_image_url, excerpt, reading_time_minutes, views_count, status, published_at, created_at, updated_at FROM posts WHERE status='published' AND published_at<=now() ORDER BY views_count DESC,published_at DESC,id LIMIT 6
 `
 
 func (q *Queries) PopularPosts(ctx context.Context) ([]Post, error) {
@@ -507,6 +645,7 @@ func (q *Queries) PopularPosts(ctx context.Context) ([]Post, error) {
 			&i.Title,
 			&i.ContentHtml,
 			&i.ContentJson,
+			&i.CoverImageUrl,
 			&i.Excerpt,
 			&i.ReadingTimeMinutes,
 			&i.ViewsCount,
@@ -526,7 +665,7 @@ func (q *Queries) PopularPosts(ctx context.Context) ([]Post, error) {
 }
 
 const postByID = `-- name: PostByID :one
-SELECT id, author_id, category_id, slug, title, content_html, content_json, excerpt, reading_time_minutes, views_count, status, published_at, created_at, updated_at FROM posts WHERE id=$1
+SELECT id, author_id, category_id, slug, title, content_html, content_json, cover_image_url, excerpt, reading_time_minutes, views_count, status, published_at, created_at, updated_at FROM posts WHERE id=$1
 `
 
 func (q *Queries) PostByID(ctx context.Context, id string) (Post, error) {
@@ -540,6 +679,7 @@ func (q *Queries) PostByID(ctx context.Context, id string) (Post, error) {
 		&i.Title,
 		&i.ContentHtml,
 		&i.ContentJson,
+		&i.CoverImageUrl,
 		&i.Excerpt,
 		&i.ReadingTimeMinutes,
 		&i.ViewsCount,
@@ -552,7 +692,7 @@ func (q *Queries) PostByID(ctx context.Context, id string) (Post, error) {
 }
 
 const postBySlug = `-- name: PostBySlug :one
-SELECT id, author_id, category_id, slug, title, content_html, content_json, excerpt, reading_time_minutes, views_count, status, published_at, created_at, updated_at FROM posts WHERE slug=$1 AND status='published' AND published_at<=now()
+SELECT id, author_id, category_id, slug, title, content_html, content_json, cover_image_url, excerpt, reading_time_minutes, views_count, status, published_at, created_at, updated_at FROM posts WHERE slug=$1 AND status='published' AND published_at<=now()
 `
 
 func (q *Queries) PostBySlug(ctx context.Context, slug string) (Post, error) {
@@ -566,6 +706,7 @@ func (q *Queries) PostBySlug(ctx context.Context, slug string) (Post, error) {
 		&i.Title,
 		&i.ContentHtml,
 		&i.ContentJson,
+		&i.CoverImageUrl,
 		&i.Excerpt,
 		&i.ReadingTimeMinutes,
 		&i.ViewsCount,
@@ -602,10 +743,11 @@ func (q *Queries) PostTags(ctx context.Context, postID string) ([]Tag, error) {
 }
 
 const savePost = `-- name: SavePost :one
-INSERT INTO posts(id,author_id,category_id,slug,title,content_html,content_json,excerpt,reading_time_minutes,status,published_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CASE WHEN $10='published' THEN now() ELSE NULL END)
-ON CONFLICT(id) DO UPDATE SET category_id=EXCLUDED.category_id,slug=EXCLUDED.slug,title=EXCLUDED.title,content_html=EXCLUDED.content_html,content_json=EXCLUDED.content_json,excerpt=EXCLUDED.excerpt,reading_time_minutes=EXCLUDED.reading_time_minutes,status=EXCLUDED.status,published_at=CASE WHEN EXCLUDED.status='published' THEN COALESCE(posts.published_at,now()) ELSE posts.published_at END,updated_at=now()
-RETURNING id, author_id, category_id, slug, title, content_html, content_json, excerpt, reading_time_minutes, views_count, status, published_at, created_at, updated_at
+INSERT INTO posts(id,author_id,category_id,slug,title,content_html,content_json,excerpt,reading_time_minutes,status,published_at,cover_image_url)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CASE WHEN $10='published' THEN now() ELSE NULL END,$11)
+ON CONFLICT(id) DO UPDATE SET category_id=EXCLUDED.category_id,slug=EXCLUDED.slug,title=EXCLUDED.title,content_html=EXCLUDED.content_html,content_json=EXCLUDED.content_json,excerpt=EXCLUDED.excerpt,reading_time_minutes=EXCLUDED.reading_time_minutes,status=EXCLUDED.status,cover_image_url=EXCLUDED.cover_image_url,published_at=CASE WHEN EXCLUDED.status='published' THEN COALESCE(posts.published_at,now()) ELSE posts.published_at END,updated_at=now()
+WHERE posts.status NOT IN ('archived','deleted') AND posts.author_id=EXCLUDED.author_id
+RETURNING id, author_id, category_id, slug, title, content_html, content_json, cover_image_url, excerpt, reading_time_minutes, views_count, status, published_at, created_at, updated_at
 `
 
 type SavePostParams struct {
@@ -619,6 +761,7 @@ type SavePostParams struct {
 	Excerpt            string  `json:"excerpt"`
 	ReadingTimeMinutes int32   `json:"reading_time_minutes"`
 	Status             string  `json:"status"`
+	CoverImageUrl      *string `json:"cover_image_url"`
 }
 
 func (q *Queries) SavePost(ctx context.Context, arg SavePostParams) (Post, error) {
@@ -633,6 +776,7 @@ func (q *Queries) SavePost(ctx context.Context, arg SavePostParams) (Post, error
 		arg.Excerpt,
 		arg.ReadingTimeMinutes,
 		arg.Status,
+		arg.CoverImageUrl,
 	)
 	var i Post
 	err := row.Scan(
@@ -643,6 +787,7 @@ func (q *Queries) SavePost(ctx context.Context, arg SavePostParams) (Post, error
 		&i.Title,
 		&i.ContentHtml,
 		&i.ContentJson,
+		&i.CoverImageUrl,
 		&i.Excerpt,
 		&i.ReadingTimeMinutes,
 		&i.ViewsCount,
@@ -655,7 +800,7 @@ func (q *Queries) SavePost(ctx context.Context, arg SavePostParams) (Post, error
 }
 
 const suggestPosts = `-- name: SuggestPosts :many
-SELECT id, author_id, category_id, slug, title, content_html, content_json, excerpt, reading_time_minutes, views_count, status, published_at, created_at, updated_at FROM posts WHERE status='published' AND published_at<=now() AND (title ILIKE $1::text OR content_html ILIKE $1::text)
+SELECT id, author_id, category_id, slug, title, content_html, content_json, cover_image_url, excerpt, reading_time_minutes, views_count, status, published_at, created_at, updated_at FROM posts WHERE status='published' AND published_at<=now() AND (title ILIKE $1::text OR content_html ILIKE $1::text)
 ORDER BY (title ILIKE $1::text) DESC,views_count DESC,id LIMIT 8
 `
 
@@ -676,6 +821,7 @@ func (q *Queries) SuggestPosts(ctx context.Context, pattern string) ([]Post, err
 			&i.Title,
 			&i.ContentHtml,
 			&i.ContentJson,
+			&i.CoverImageUrl,
 			&i.Excerpt,
 			&i.ReadingTimeMinutes,
 			&i.ViewsCount,
@@ -718,8 +864,41 @@ func (q *Queries) Tags(ctx context.Context) ([]Tag, error) {
 	return items, nil
 }
 
+const updateAuthor = `-- name: UpdateAuthor :one
+UPDATE users SET name=$2,email=$3,
+ disabled_at=CASE WHEN $4::boolean THEN COALESCE(disabled_at,now()) ELSE NULL END
+WHERE id=$1 AND role='author' RETURNING id, email, name, password_hash, role, disabled_at, created_at
+`
+
+type UpdateAuthorParams struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Disabled bool   `json:"disabled"`
+}
+
+func (q *Queries) UpdateAuthor(ctx context.Context, arg UpdateAuthorParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateAuthor,
+		arg.ID,
+		arg.Name,
+		arg.Email,
+		arg.Disabled,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.PasswordHash,
+		&i.Role,
+		&i.DisabledAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const userByEmail = `-- name: UserByEmail :one
-SELECT id, email, name, password_hash, role, created_at FROM users WHERE email=$1
+SELECT id, email, name, password_hash, role, disabled_at, created_at FROM users WHERE email=$1
 `
 
 func (q *Queries) UserByEmail(ctx context.Context, email string) (User, error) {
@@ -731,13 +910,14 @@ func (q *Queries) UserByEmail(ctx context.Context, email string) (User, error) {
 		&i.Name,
 		&i.PasswordHash,
 		&i.Role,
+		&i.DisabledAt,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const userByID = `-- name: UserByID :one
-SELECT id, email, name, password_hash, role, created_at FROM users WHERE id=$1
+SELECT id, email, name, password_hash, role, disabled_at, created_at FROM users WHERE id=$1
 `
 
 func (q *Queries) UserByID(ctx context.Context, id string) (User, error) {
@@ -749,6 +929,7 @@ func (q *Queries) UserByID(ctx context.Context, id string) (User, error) {
 		&i.Name,
 		&i.PasswordHash,
 		&i.Role,
+		&i.DisabledAt,
 		&i.CreatedAt,
 	)
 	return i, err

@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 const config: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  images: { localPatterns: [{ pathname: "/api/v1/media/**", search: "" }] },
   async rewrites() {
     return [
       {

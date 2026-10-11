@@ -34,10 +34,10 @@ func translate(err error) error {
 	return err
 }
 func user(v db.User) domain.User {
-	return domain.User{ID: v.ID, Email: v.Email, Name: v.Name, PasswordHash: v.PasswordHash, Role: v.Role}
+	return domain.User{ID: v.ID, Email: v.Email, Name: v.Name, PasswordHash: v.PasswordHash, Role: v.Role, DisabledAt: v.DisabledAt}
 }
 func post(v db.Post) domain.Post {
-	return domain.Post{ID: v.ID, AuthorID: v.AuthorID, CategoryID: v.CategoryID, Slug: v.Slug, Title: v.Title, ContentHTML: v.ContentHtml, ContentJSON: v.ContentJson, Excerpt: v.Excerpt, ReadingTimeMinutes: v.ReadingTimeMinutes, ViewsCount: v.ViewsCount, Status: v.Status, PublishedAt: v.PublishedAt, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt, Tags: []domain.Taxon{}}
+	return domain.Post{ID: v.ID, AuthorID: v.AuthorID, CategoryID: v.CategoryID, Slug: v.Slug, Title: v.Title, ContentHTML: v.ContentHtml, ContentJSON: v.ContentJson, CoverImageURL: v.CoverImageUrl, Excerpt: v.Excerpt, ReadingTimeMinutes: v.ReadingTimeMinutes, ViewsCount: v.ViewsCount, Status: v.Status, PublishedAt: v.PublishedAt, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt, Tags: []domain.Taxon{}}
 }
 func posts(v []db.Post) []domain.Post {
 	out := make([]domain.Post, 0, len(v))
@@ -60,6 +60,22 @@ func (r *Postgres) UserByEmail(ctx context.Context, email string) (domain.User, 
 func (r *Postgres) UserByID(ctx context.Context, id string) (domain.User, error) {
 	v, e := r.q.UserByID(ctx, id)
 	return user(v), translate(e)
+}
+func (r *Postgres) Authors(ctx context.Context, page, limit int) (domain.AuthorPage, error) {
+	v, err := r.q.ListAuthors(ctx, db.ListAuthorsParams{Limit: int32(limit), Offset: int32((page - 1) * limit)})
+	if err != nil {
+		return domain.AuthorPage{}, translate(err)
+	}
+	total, err := r.q.CountAuthors(ctx)
+	items := make([]domain.User, 0, len(v))
+	for _, item := range v {
+		items = append(items, user(item))
+	}
+	return domain.AuthorPage{Items: items, Total: total, Page: page, Limit: limit}, translate(err)
+}
+func (r *Postgres) UpdateAuthor(ctx context.Context, u domain.User, disabled bool) (domain.User, error) {
+	v, err := r.q.UpdateAuthor(ctx, db.UpdateAuthorParams{ID: u.ID, Name: u.Name, Email: u.Email, Disabled: disabled})
+	return user(v), translate(err)
 }
 func (r *Postgres) Posts(ctx context.Context, f domain.Filter) (domain.PostPage, error) {
 	v, e := r.q.ListPosts(ctx, db.ListPostsParams{Category: f.Category, Tag: f.Tag, PageLimit: int32(f.Limit), PageOffset: int32((f.Page - 1) * f.Limit)})
@@ -108,13 +124,31 @@ func (r *Postgres) OwnPosts(ctx context.Context, u domain.User) ([]domain.Post, 
 	}
 	out := make([]domain.Post, 0, len(v))
 	for _, p := range v {
-		item, err := r.enrich(ctx, p, nil)
+		item, err := r.enrich(ctx, p.Post, nil)
 		if err != nil {
 			return nil, err
 		}
+		item.AuthorName = p.AuthorName
 		out = append(out, item)
 	}
 	return out, nil
+}
+func (r *Postgres) DeletedPosts(ctx context.Context) ([]domain.Post, error) {
+	v, err := r.q.DeletedPosts(ctx)
+	if err != nil {
+		return nil, translate(err)
+	}
+	out := make([]domain.Post, 0, len(v))
+	for _, p := range v {
+		item := post(p.Post)
+		item.AuthorName = p.AuthorName
+		out = append(out, item)
+	}
+	return out, nil
+}
+func (r *Postgres) ChangePostStatus(ctx context.Context, id, status string) (domain.Post, error) {
+	v, err := r.q.ChangePostStatus(ctx, db.ChangePostStatusParams{ID: id, NewStatus: status})
+	return r.enrich(ctx, v, translate(err))
 }
 func (r *Postgres) SavePost(ctx context.Context, p domain.Post, tags []string) (domain.Post, error) {
 	tx, e := r.Pool.Begin(ctx)
@@ -123,7 +157,7 @@ func (r *Postgres) SavePost(ctx context.Context, p domain.Post, tags []string) (
 	}
 	defer tx.Rollback(ctx)
 	q := r.q.WithTx(tx)
-	v, e := q.SavePost(ctx, db.SavePostParams{ID: p.ID, AuthorID: p.AuthorID, CategoryID: p.CategoryID, Slug: p.Slug, Title: p.Title, ContentHtml: p.ContentHTML, ContentJson: p.ContentJSON, Excerpt: p.Excerpt, ReadingTimeMinutes: p.ReadingTimeMinutes, Status: p.Status})
+	v, e := q.SavePost(ctx, db.SavePostParams{ID: p.ID, AuthorID: p.AuthorID, CategoryID: p.CategoryID, Slug: p.Slug, Title: p.Title, ContentHtml: p.ContentHTML, ContentJson: p.ContentJSON, CoverImageUrl: p.CoverImageURL, Excerpt: p.Excerpt, ReadingTimeMinutes: p.ReadingTimeMinutes, Status: p.Status})
 	if e != nil {
 		return domain.Post{}, translate(e)
 	}

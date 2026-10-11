@@ -57,7 +57,11 @@ func run(log *slog.Logger) error {
 	options.WriteTimeout = time.Second
 	cache := platform.Redis{Client: redis.NewClient(options)}
 	defer cache.Client.Close()
-	svc := &usecase.Service{Repo: repository.New(pool), Cache: cache, Invite: cfg.Invite, SiteURL: cfg.SiteURL, Log: log}
+	svc := &usecase.Service{Repo: repository.New(pool), Cache: cache, SiteURL: cfg.SiteURL, Log: log}
+	svc.Media = repository.LocalMedia{Root: cfg.UploadDir}
+	if cfg.RevalidationURL != "" {
+		svc.SiteCache = platform.Revalidation{URL: cfg.RevalidationURL, Secret: cfg.RevalidationSecret}
+	}
 	var mail domain.Mailer = mailer.Mock{Log: log}
 	if cfg.MailDriver == "smtp" {
 		mail = mailer.SMTP{Host: cfg.SMTPHost, Port: cfg.SMTPPort, Username: cfg.SMTPUser, Password: cfg.SMTPPassword, From: cfg.SMTPFrom}

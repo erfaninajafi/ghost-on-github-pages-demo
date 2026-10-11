@@ -10,7 +10,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      # Use network authentication; pg_isready alone accepts wrong passwords.
+      test: [CMD-SHELL, 'PGPASSWORD="$$POSTGRES_PASSWORD" psql -X -h postgres -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -Atqc "SELECT 1"']
       interval: 5s
       timeout: 3s
       retries: 20
@@ -46,7 +47,9 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-expertsacademy}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-expertsacademy}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       JWT_SECRET: ${JWT_SECRET:?Run scripts/init-env.sh first}
-      AUTHOR_INVITE_CODE: ${AUTHOR_INVITE_CODE:-}
+      UPLOAD_DIR: /data/uploads
+      WEB_REVALIDATION_URL: http://web:3000/api/revalidate
+      REVALIDATION_SECRET: ${REVALIDATION_SECRET:?Run scripts/init-env.sh first}
       SITE_URL: ${SITE_URL:-http://localhost:3000}
       CORS_ORIGIN: ${SITE_URL:-http://localhost:3000}
       TRUSTED_PROXY_CIDRS: 172.30.58.0/24
@@ -62,6 +65,8 @@ services:
       redis:
         condition: service_healthy
     read_only: true
+    volumes:
+      - uploads_data:/data/uploads
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
@@ -80,6 +85,7 @@ services:
     environment:
       API_INTERNAL_URL: http://api:8080
       NEXT_PUBLIC_SITE_URL: ${SITE_URL:-http://localhost:3000}
+      REVALIDATION_SECRET: ${REVALIDATION_SECRET:?Run scripts/init-env.sh first}
     depends_on:
       api:
         condition: service_healthy
@@ -114,6 +120,7 @@ volumes:
   redis_data:
   caddy_data:
   caddy_config:
+  uploads_data:
 networks:
   default:
     ipam:

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	stdhttp "net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -49,6 +50,8 @@ func fail(w stdhttp.ResponseWriter, status int, code, message string) {
 }
 func (s *Server) resultError(w stdhttp.ResponseWriter, e error) {
 	switch {
+	case errors.Is(e, domain.ErrTooLarge):
+		fail(w, 413, "image_too_large", "تصویر باید حداکثر ۵ مگابایت و ۱۲ میلیون پیکسل باشد.")
 	case errors.Is(e, domain.ErrInvalid):
 		fail(w, 400, "invalid_input", "اطلاعات واردشده معتبر نیست.")
 	case errors.Is(e, domain.ErrUnauthorized):
@@ -115,14 +118,24 @@ func (s *Server) Handler() stdhttp.Handler {
 		r.Get("/posts/{id}/comments", s.comments)
 		r.Post("/posts/{id}/comments", s.addComment)
 		r.Get("/taxonomy", s.taxonomy)
+		r.Get("/media/{owner}/{file}", s.media)
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuthor)
 			r.Get("/auth/me", func(w stdhttp.ResponseWriter, r *stdhttp.Request) { write(w, 200, current(r)) })
 			r.Get("/studio/posts", s.ownPosts)
 			r.Post("/studio/posts", s.savePost)
-			r.Get("/studio/comments", s.pending)
-			r.Patch("/studio/comments/{id}", s.moderate)
-			r.Post("/studio/taxonomy/{kind}", s.addTaxon)
+			r.Post("/studio/media", s.uploadImage)
+			r.Group(func(r chi.Router) {
+				r.Use(s.requireAdmin)
+				r.Get("/studio/authors", s.authors)
+				r.Post("/studio/authors", s.createAuthor)
+				r.Patch("/studio/authors/{id}", s.updateAuthor)
+				r.Patch("/studio/posts/{id}/status", s.changePostStatus)
+				r.Delete("/studio/posts/{id}", s.deletePost)
+				r.Get("/studio/comments", s.pending)
+				r.Patch("/studio/comments/{id}", s.moderate)
+				r.Post("/studio/taxonomy/{kind}", s.addTaxon)
+			})
 		})
 	})
 	return r
@@ -151,7 +164,7 @@ func (s *Server) security(next stdhttp.Handler) stdhttp.Handler {
 			w.Header().Add("Vary", "Origin")
 		}
 		if r.Method == "OPTIONS" {
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			w.WriteHeader(204)
 			return
@@ -258,6 +271,10 @@ func (s *Server) authenticate(next stdhttp.Handler) stdhttp.Handler {
 			s.resultError(w, e)
 			return
 		}
+		if u.DisabledAt != nil {
+			rejectSession()
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, &u)))
 	})
 }
@@ -269,6 +286,20 @@ func (s *Server) requireAuthor(next stdhttp.Handler) stdhttp.Handler {
 			return
 		}
 		if u.Role != "author" && u.Role != "admin" {
+			s.resultError(w, domain.ErrForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+func (s *Server) requireAdmin(next stdhttp.Handler) stdhttp.Handler {
+	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		u := current(r)
+		if u == nil {
+			s.resultError(w, domain.ErrUnauthorized)
+			return
+		}
+		if u.Role != "admin" || u.DisabledAt != nil {
 			s.resultError(w, domain.ErrForbidden)
 			return
 		}
@@ -291,13 +322,12 @@ func (s *Server) signup(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		Name     string `json:"name"`
 		Email    string `json:"email"`
 		Password string `json:"password"`
-		Invite   string `json:"invite_code"`
 	}
 	if e := decode(w, r, &in); e != nil {
 		s.resultError(w, e)
 		return
 	}
-	u, e := s.Service.Signup(r.Context(), in.Name, in.Email, in.Password, in.Invite)
+	u, e := s.Service.Signup(r.Context(), in.Name, in.Email, in.Password)
 	if e != nil {
 		s.resultError(w, e)
 		return
@@ -367,7 +397,12 @@ func (s *Server) suggest(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	write(w, 200, v)
 }
 func (s *Server) detail(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	v, e := s.Service.Detail(r.Context(), chi.URLParam(r, "slug"), r.URL.Query().Get("count_view") != "false")
+	slug, e := url.PathUnescape(chi.URLParam(r, "slug"))
+	if e != nil || !usecase.ValidSlug(slug) {
+		s.resultError(w, domain.ErrNotFound)
+		return
+	}
+	v, e := s.Service.Detail(r.Context(), slug, r.URL.Query().Get("count_view") != "false")
 	if e != nil {
 		s.resultError(w, e)
 		return
@@ -407,7 +442,12 @@ func (s *Server) taxonomy(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}{c, t})
 }
 func (s *Server) ownPosts(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	v, e := s.Service.Repo.OwnPosts(r.Context(), *current(r))
+	status := r.URL.Query().Get("status")
+	if status != "" && status != "deleted" {
+		s.resultError(w, domain.ErrInvalid)
+		return
+	}
+	v, e := s.Service.StudioPosts(r.Context(), *current(r), status == "deleted")
 	if e != nil {
 		s.resultError(w, e)
 		return

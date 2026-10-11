@@ -486,6 +486,29 @@ p + p {
 .card-body {
   padding: 22px;
 }
+.card-cover {
+  object-fit: cover;
+}
+.article-cover {
+  width: 100%;
+  height: auto;
+  max-height: 560px;
+  object-fit: cover;
+  border-radius: 12px;
+  margin-block-end: 32px;
+}
+.cover-upload {
+  margin-block: 20px;
+}
+.cover-preview {
+  width: 100%;
+  height: auto;
+  max-height: 260px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: var(--soft);
+  margin-block: 16px;
+}
 .card-body h2 {
   font-size: 19px;
   margin-bottom: 12px;
@@ -888,6 +911,37 @@ select:focus {
   color: var(--muted);
   font-size: 11px;
 }
+.studio-post-title {
+  text-align: start;
+  width: 100%;
+}
+.studio-post .actions {
+  gap: 12px;
+  margin-top: 8px;
+}
+.danger-button {
+  color: var(--text);
+  text-decoration: underline;
+}
+.action-confirmation {
+  border-color: var(--accent);
+}
+.author-list {
+  margin-block: 24px;
+}
+.author-item {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding-block: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.author-item p {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
 .editor-toolbar {
   display: flex;
   gap: 10px;
@@ -1127,4 +1181,9 @@ select:focus {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Preserve literal spacing in plain-text articles without changing HTML posts. */
+.prose-content.plain-text p {
+  white-space: pre-wrap;
 }
