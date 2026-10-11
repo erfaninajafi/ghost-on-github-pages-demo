@@ -1,24 +1,87 @@
-# اجرا، استقرار و نگهداری
+# Deployment and operations
 
-## محیط محلی
+Run Compose commands from the repository root. See the [README](../README.md) for local startup and administrator bootstrap, and [development](DEVELOPMENT.md) for native Go/Next.js setup.
 
-از ریشه `./scripts/init-env.sh` و `docker compose up --build -d` را اجرا کنید. `.env` در git نادیده گرفته می‌شود و با دسترسی فقط مالک ساخته می‌شود. رازها به‌صورت hex تولید می‌شوند تا URL دیتابیس و Redis بدون escape قابل استفاده باشد. اگر رمز را دستی عوض می‌کنید، کاراکترهای رزروشدهٔ URL باید encode شوند؛ تغییر POSTGRES_PASSWORD در env، رمز دیتابیس موجود را خودکار تغییر نمی‌دهد.
-
-Compose شامل postgres، redis، migrate، api، web و gateway است. migrate پس از healthy شدن postgres اجرا می‌شود؛ API فقط بعد از migration موفق و Redis سالم آغاز می‌شود. frontend و gateway نیز منتظر وابستگی سالم هستند. Migration اجباری در startup خود API اجرا نمی‌شود تا چند replica برای DDL رقابت نکنند.
+## Local services and storage
 
 ```bash
+bash scripts/init-env.sh
+docker compose up --build -d
 docker compose ps -a
 docker compose logs --tail=100 api web migrate
-docker compose down
 ```
 
-`down` volumeها را نگه می‌دارد. از `down -v` برای دیتای واقعی استفاده نکنید. در اولین اجرا دیتابیس خالی است؛ حساب مدیر و مقاله باید توسط شما ساخته شوند. محیط توسعهٔ Mock هیچ ایمیلی بیرون نمی‌فرستد.
+The initializer creates a private `.env` with independent PostgreSQL, Redis, JWT, and revalidation secrets. It preserves existing settings and adds a missing/empty revalidation secret. It does not rotate other credentials or fill an incomplete existing configuration. Generated hex credentials work directly in connection URLs; manually chosen credentials containing reserved URL characters require percent-encoding.
 
-## استقرار روی دامنه رسمی
+Startup order is PostgreSQL readiness, migration completion, Redis readiness, API, web, then gateway. Migrations are a separate one-shot service rather than API startup DDL. `migrate` exiting with code 0 is normal. No sample content or default account is created.
 
-۱. یک سرور Linux با Docker/Compose، فضای کافی برای imageها و backup و دسترسی پایدار به SMTP آماده کنید.
-۲. رکورد A و در صورت استفاده AAAA دامنه `blog.expertsacademy.ir` را به سرور وصل کنید. گواهی HTTPS تا DNS درست و پورت‌های ۸۰ و ۴۴۳ قابل‌دسترسی نباشند صادر نمی‌شود.
-۳. `.env` را از نمونه بسازید و این مقادیر را تنظیم کنید:
+| Service    | Purpose                                           | Persistent data                           |
+| ---------- | ------------------------------------------------- | ----------------------------------------- |
+| `postgres` | PostgreSQL 16                                     | `postgres_data`                           |
+| `redis`    | Redis 7.4, authentication, AOF, 256 MB/noeviction | `redis_data`                              |
+| `migrate`  | Apply numbered SQL migrations                     | Schema version in PostgreSQL              |
+| `api`      | HTTP API, media, mail worker                      | `uploads_data` mounted at `/data/uploads` |
+| `web`      | Next.js server and runtime cache                  | Cache is disposable; no content database  |
+| `gateway`  | Caddy, TLS, reverse proxy                         | `caddy_data`, `caddy_config`              |
+
+Only gateway ports are published: 3000/3443 by default, mapping to container ports 80/443. Local `CADDY_SITE=:80` serves HTTP, so the default local URL is `http://localhost:3000`. PostgreSQL and Redis have no host ports in the standard configuration.
+
+```bash
+docker compose down
+docker compose up -d
+```
+
+`down` preserves volumes. Do not use `down -v` to restart or repair a database authentication error; it deletes persistent data. Uploaded images survive API restarts and image replacement.
+
+## Configuration reference
+
+Use [root .env.example](../.env.example) for Compose, [API .env.example](../apps/api/.env.example) for native Go, and [web .env.example](../apps/web/.env.example) for native Next.js. Go reads exported process variables and does not load an env file itself. Next.js loads `.env.local` for local development.
+
+### Root Compose variables
+
+| Variable                         | Default/example and purpose                                                                                |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `POSTGRES_DB`                    | `expertsacademy`; initialized database name                                                                |
+| `POSTGRES_USER`                  | `expertsacademy`; initialized database role                                                                |
+| `POSTGRES_PASSWORD`              | Required; generated secret; does not change an existing database role automatically                        |
+| `REDIS_PASSWORD`                 | Required; generated Redis authentication secret                                                            |
+| `JWT_SECRET`                     | Required; independent secret of at least 32 bytes; changing it invalidates existing sessions               |
+| `REVALIDATION_SECRET`            | Required; independent API/web webhook secret of at least 32 bytes                                          |
+| `APP_ENV`                        | `development`; use `production` for secure cookies and production validation                               |
+| `SITE_URL`                       | `http://localhost:3000`; full origin with no trailing slash/path; becomes API Origin and frontend site URL |
+| `CADDY_SITE`                     | `:80` locally; production hostname without scheme                                                          |
+| `HTTP_PORT`                      | `3000` locally, `80` in production                                                                         |
+| `HTTPS_PORT`                     | `3443` locally, `443` in production                                                                        |
+| `MAIL_DRIVER`                    | `mock` locally; `smtp` required in production                                                              |
+| `SMTP_HOST`                      | SMTP server hostname; required with SMTP                                                                   |
+| `SMTP_PORT`                      | `587`; adapter requires STARTTLS, not implicit TLS                                                         |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | Provider authentication credentials                                                                        |
+| `SMTP_FROM`                      | Provider-approved sender address; required with SMTP                                                       |
+
+Only `SITE_URL` is forwarded as the public web build argument. Never expose database credentials, JWT secrets, SMTP credentials, or `REVALIDATION_SECRET` with a `NEXT_PUBLIC_` name. Changing `SITE_URL` requires rebuilding web because public values are embedded in client output. The root `.env` is executable shell input for the integration helper; keep values properly quoted when editing it manually.
+
+### Direct application variables
+
+| Variable               | Scope and behavior                                                                                   |
+| ---------------------- | ---------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`         | API/admin process; PostgreSQL connection URL; supplied by Compose                                    |
+| `REDIS_URL`            | API; Redis URL; native fallback `redis://localhost:6379/0`                                           |
+| `HTTP_ADDR`            | API; defaults to `:8080`                                                                             |
+| `CORS_ORIGIN`          | API; browser origin without a trailing slash; Compose derives it from `SITE_URL`                     |
+| `TRUSTED_PROXY_CIDRS`  | API; comma-separated trusted peer networks; empty trusts no forwarded IPs                            |
+| `UPLOAD_DIR`           | API; defaults to `./uploads`, Compose uses `/data/uploads`                                           |
+| `WEB_REVALIDATION_URL` | API; Compose uses `http://web:3000/api/revalidate`; empty disables webhook calls                     |
+| `API_INTERNAL_URL`     | Web server and rewrite configuration; `http://api:8080` in Compose, `http://localhost:8080` natively |
+| `NEXT_PUBLIC_SITE_URL` | Web public origin for canonical URLs, feeds, sitemap, and metadata                                   |
+| `REVALIDATION_SECRET`  | API and web runtime; values must match                                                               |
+
+`ADMIN_EMAIL`, `ADMIN_NAME`, and `ADMIN_PASSWORD` are inputs only to the explicit administrator CLI. The password must be 12–72 UTF-8 bytes. The CLI creates an account rather than resetting one. `TEST_DATABASE_URL`, `TEST_REDIS_URL`, and optional `GO_BIN` are test configuration; see [development](DEVELOPMENT.md#verification-commands).
+
+## Production deployment
+
+1. Prepare a Linux container host with Docker/Compose, storage for images and backups, and SMTP connectivity.
+2. Point the domain's A record, and AAAA record if used, to the host. Allow inbound ports 80 and 443 so Caddy can obtain and renew certificates.
+3. Generate `.env` with `bash scripts/init-env.sh` and configure the production values:
 
 ```dotenv
 APP_ENV=production
@@ -30,40 +93,59 @@ MAIL_DRIVER=smtp
 SMTP_PORT=587
 ```
 
-۴. SMTP_HOST، SMTP_USERNAME، SMTP_PASSWORD و SMTP_FROM را با اطلاعات سرویس سازمان پر کنید. From باید مطابق سیاست سرویس و SPF/DKIM/DMARC دامنهٔ ایمیل باشد. این آداپتور STARTTLS روی 587 را پشتیبانی می‌کند؛ implicit TLS روی 465 پشتیبانی نمی‌شود.
-۵. JWT_SECRET را مستقل، تصادفی و حداقل ۳۲ بایت نگه دارید. ثبت‌نام نویسندگان با ایمیل و رمز عبور و بدون دعوت انجام می‌شود.
-۶. `docker compose up --build -d` را اجرا کنید. SITE_URL در خروجی client وارد می‌شود؛ تغییر آن نیازمند rebuild وب است.
-۷. مدیر اول را مطابق README بسازید، یک مقاله منتشر کنید، نظر مهمان و reply را تأیید و تحویل واقعی هر دو ایمیل را بررسی کنید.
-۸. سلامت، backup و هشدار صف ایمیل را به ابزار مانیتورینگ سازمان متصل کنید. این مخزن DNS یا حساب SMTP شما را خودکار تغییر نمی‌دهد.
+4. Configure `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM`. Use a sender permitted by the provider and the organization's domain mail policy. The adapter requires verified STARTTLS, typically on 587; implicit TLS on 465 is unsupported.
+5. Build/start using `docker compose up --build -d`, inspect readiness and logs, then bootstrap the administrator according to the README.
+6. Publish an article, submit a guest comment and reply, approve them, and verify both real notification deliveries. Check image loading, article metadata, RSS, and sitemap using the actual public origin.
+7. Schedule private off-host backups and monitor dependency readiness, disk usage, Redis memory, and exhausted email jobs.
 
-پورت دیتابیس و Redis در Compose منتشر نمی‌شود. Caddy گواهی را تمدید و HTTP را به HTTPS هدایت می‌کند. شبکهٔ اختصاصی `172.30.58.0/24` برای اعتماد به forwarded client IP تنظیم شده؛ در صورت تداخل subnet، هم Compose و هم TRUSTED_PROXY_CIDRS را همزمان عوض کنید. یک proxy خارجی مانند CDN نیاز به تنظیم دقیق زنجیرهٔ trusted proxies دارد؛ هدر IP کاربر را بدون بررسی اعتماد نکنید.
+Production configuration rejects non-HTTPS origins and mock mail. Public signup is open and grants authors the ability to publish their own content. Confirm that this policy fits the deployment before making the studio public; there is no built-in signup-disable setting or invitation workflow.
 
-API بدون root، filesystem فقط‌خواندنی و capabilityهای حذف‌شده اجرا می‌شود. web بدون root است ولی `.next` قابل نوشتن است چون ISR در زمان اجرا cache می‌نویسد. راه‌اندازی مجدد container ممکن است cache را بازسازی کند؛ دادهٔ محتوا در PostgreSQL محفوظ است. در چند replica، cache فعلی Next محلی است؛ تغییرات حداکثر با چرخهٔ revalidate منتشر می‌شوند. برای invalidation فوری و scale گسترده، cache handler مشترک Next را مطابق نیاز استقرار اضافه کنید.
+Compose uses subnet `172.30.58.0/24`, which the API trusts for forwarded IPs. If it conflicts with an existing network, change the subnet and API `TRUSTED_PROXY_CIDRS` together in `docker-compose.yml`. A CDN or extra proxy needs its own verified forwarding setup. The API uses the last forwarded IP only when the direct peer is trusted; do not expose the API directly to the internet.
 
-## پشتیبان‌گیری و بازیابی
+The API runs as UID 10001 with a read-only root filesystem and dropped capabilities. Web runs without root, but `.next` is writable for ISR and image caching. Local uploads and web caches are not automatically shared across hosts. A multi-host deployment needs shared media storage and cache invalidation reaching every web replica.
 
-پشتیبان را روی مسیر امن، سپس در یک محل جدا از سرور نگه دارید. دستور زیر رمز را در خروجی نشان نمی‌دهد:
+## Backup and restore
+
+### Create a coordinated database/media backup
+
+PostgreSQL holds articles, users, comments, and the email outbox. Uploaded image bytes live in `uploads_data` and are not included in a SQL dump. For a consistent pair, briefly stop application writers; this also pauses the mail worker and causes publication downtime. Any other client writing directly to the database/storage must be paused too.
 
 ```bash
 umask 077
 mkdir -p backups
-docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "backups/blog-$(date +%Y%m%d-%H%M%S).dump"
+backup_stamp=$(date -u +%Y%m%d-%H%M%S)
+docker compose stop gateway web api
+docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "backups/blog-${backup_stamp}.dump"
+docker compose run --rm -T --no-deps --entrypoint sh api -c 'tar -C /data/uploads -cf - .' > "backups/uploads-${backup_stamp}.tar"
+docker compose up -d api web gateway
 ```
 
-بازیابی را ابتدا روی دیتابیس جدا تمرین کنید. پس از تهیهٔ پشتیبان از وضعیت موجود، فقط روی مقصد خالی تأییدشده:
+Check that both commands succeeded and keep matching timestamps together. Resume services if a backup step fails. Copy backups to private storage away from the host and practice recovery on a separate environment. Back up configuration securely as well; it contains secrets. `caddy_data` contains private certificate keys and needs protected handling if included in disaster recovery.
+
+For a live database-only snapshot, the `pg_dump` command can run without stopping the stack, but it does not provide a coordinated media snapshot.
+
+### Restore into an empty recovery environment
+
+Use a separate recovery host/environment and empty target volumes. Preserve a backup of any existing target data before replacement. Do not restore on top of initialized application tables using the commands below. Start only infrastructure first, so the migrate service has not created the schema:
 
 ```bash
+docker compose build api web
+docker compose up -d postgres redis
 docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner --exit-on-error' < backups/selected.dump
+docker compose run --rm -T --no-deps --entrypoint sh api -c 'tar -C /data/uploads -xf -' < backups/matching-uploads.tar
+docker compose up -d
 ```
 
-volume مربوط به `caddy_data` حاوی کلیدهای گواهی است و باید خصوصی بماند. Redis دادهٔ اصلی محتوا نیست؛ از بین رفتن آن باعث از دست رفتن مقاله یا بازدیدهای ذخیره‌شده نمی‌شود. Redis با AOF اجرا می‌شود. اطلاعات ایمیل مهمان در PostgreSQL دادهٔ شخصی است؛ سیاست نگهداری و حذف سازمان را اعمال کنید.
+The image's default user extracts media as UID 10001 into its writable upload volume. Ensure sufficient space and restore only trusted archives. The database dump includes migration state; subsequent `migrate up` applies any newer migrations from the chosen release. Verify login, article content, comments, and actual cover/inline image URLs before routing traffic to the recovery stack.
 
-## صف ایمیل
+Redis is not the durable store for articles or view counts. Losing Redis may reset caches/rate-limit state but does not remove PostgreSQL content. Fresh Redis is acceptable for recovery. Guest emails and outbox data in backups are personal information; follow the organization's retention policy. No automatic backup/restore scheduler or media cleanup job is included.
 
-بررسی jobهای متوقف‌شده بدون نمایش آدرس مخاطب:
+## Email outbox
+
+Inspect exhausted jobs without displaying recipients or bodies:
 
 ```bash
-docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+docker compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
 SELECT id, attempts, created_at, available_at
 FROM email_outbox
 WHERE sent_at IS NULL AND attempts >= 12
@@ -71,48 +153,65 @@ ORDER BY created_at;
 SQL
 ```
 
-پس از اصلاح SMTP، job مشخص را با `UPDATE email_outbox SET attempts=0, available_at=now() WHERE id='UUID' AND sent_at IS NULL;` دوباره آماده کنید. برای اجرای برنامه‌ریزی‌شدهٔ پاک‌سازی، jobهای sent قدیمی را طبق سیاست سازمان حذف کنید. صف دارای تضمین at-least-once است؛ retry پس از ابهام پاسخ SMTP ممکن است ایمیل تکراری ایجاد کند.
+After fixing SMTP, requeue only a reviewed job by its UUID:
 
-## توسعه بدون Docker برای برنامه‌ها
-
-Go 1.24+ (CI و image: 1.27)، Node 22 و sqlc 1.30.0 لازم‌اند. PostgreSQL و Redis را محلی یا در محیط توسعهٔ مجزا در دسترس قرار دهید. فایل‌های نمونهٔ env را کپی و مقادیر واقعی محلی را تنظیم کنید. Go فایل env را خودکار نمی‌خواند؛ قبل از اجرا متغیرها را export کنید.
-
-```bash
-cd apps/api
-set -a
-source .env
-set +a
-go run ./cmd/api
+```sql
+UPDATE email_outbox
+SET attempts = 0, available_at = now()
+WHERE id = '<reviewed-job-uuid>' AND sent_at IS NULL;
 ```
 
-در ترمینال دیگر:
+Delivery is at least once, so retry after an ambiguous SMTP result can duplicate an email. The worker uses five-minute leases, polls every two seconds, and stops after 12 attempts. A mock driver logs job IDs and marks deliveries processed without sending external email. Purge old sent jobs only under an approved retention policy.
+
+## Migrations and releases
+
+Before deploying changed code, run applicable Go tests/vet, frontend type checks/tests/build, integration checks, and sqlc generation. Keep `schema.sql` aligned with new numbered up/down migrations; never rewrite an already applied production migration. Back up before schema changes. Review backward compatibility before rolling application images back: an old image and newer database may not be compatible.
 
 ```bash
-cd apps/web
-cp .env.example .env.local
-npm ci
-npm run dev
+bash scripts/init-env.sh
+docker compose up --build -d
+docker compose ps -a
+docker compose logs --tail=100 migrate api web
 ```
 
-در حالت dev، Next درخواست‌های `/api/v1` را به API_INTERNAL_URL بازنویسی می‌کند. با TRUSTED_PROXY_CIDRS خالی، API IP فرایند Next را می‌بیند و محدودیت نرخ میان کاربران dev مشترک است. در production Caddy مستقیم `/api/v1` را به API می‌فرستد.
+Running `migrate up` at the current version is a no-op. Down migrations can discard data and must not be used as routine repair. CI performs down/up checks only on a disposable database. The local integration helper also applies migrations to the configured development Compose database before isolated-schema tests.
 
-## migration و انتشار نسخه
+Run `npm audit` from `apps/web` and `govulncheck ./...` from `apps/api` in an environment with advisory-network access. Prior local scans were blocked by network failures; see [verification](VERIFICATION.md). The repository records dependency versions and locks, but a successful build alone does not establish absence of vulnerabilities.
 
-قبل از انتشار، unit/integration tests، typecheck، build و تولید مجدد sqlc باید موفق باشند. migration جدید با شمارهٔ بعدی و SQL up/down افزوده شود؛ فایل اولیهٔ اجراشده روی production را بازنویسی نکنید. schema.sql تصویر نهایی است. قبل از تغییر مخرب، backup تهیه و restore را آزمایش کنید. اجرای دوبارهٔ migrate up در آخرین نسخه بی‌اثر است.
+## Health, logs, and cache recovery
 
-CI سرویس‌های PostgreSQL/Redis جدا ایجاد می‌کند و بعد از تست، down/up migration را فقط روی همان دیتابیس دورریختنی اجرا می‌کند. اسکریپت local integration مخصوص Docker Engine روی Linux است چون از IP خصوصی کانتینر استفاده می‌کند. در Docker Desktop، TEST_DATABASE_URL و TEST_REDIS_URL را روی دیتابیس تست قابل‌دسترسی تنظیم و `go test -race ./...` را اجرا کنید.
+Go serves internal `/healthz` and `/readyz`; the gateway routes only `/api/v1/*` to Go. Inspect container health and logs:
 
-## سلامت و انتشار اضطراری
+```bash
+docker compose ps -a
+docker compose logs --tail=100 postgres redis migrate api web
+```
 
-`/healthz` و `/readyz` داخل شبکه روی API در دسترس‌اند. gateway فقط API نسخه‌دار را عمومی می‌کند. اگر readiness شکست خورد، ابتدا `docker compose logs postgres redis api migrate` را بررسی کنید. route، request_id، status و duration در لاگ JSON هستند؛ تنظیم retention و جمع‌آوری آن با سیستم مانیتورینگ استقرار انجام می‌شود.
+API request logs include request IDs, route names, methods, statuses, and durations. Configure log retention and collection in the deployment. Readiness requires PostgreSQL and Redis. Redis failure may still permit uncached public API reads, while writes fail with 503 and dependent restarts may wait for health.
 
-برای حذف اضطراری نسخهٔ cacheشده پس از draft کردن مقاله، `docker compose up -d --force-recreate web` cache محلی آن container را از نو می‌سازد. این کار را بعد از اطمینان از وضعیت PostgreSQL انجام دهید. در استقرار چندگرهی، تمام replicaها باید refresh شوند.
+After a save or status change, the API calls `WEB_REVALIDATION_URL` with the private secret. If content remains stale, check API logs for `site cache revalidation failed`, connectivity to web, and matching `REVALIDATION_SECRET` values. Missing/short webhook configuration returns 503; an invalid token returns 401. A committed save is not rolled back when cache revalidation fails.
 
-برای بررسی وابستگی‌ها، `npm audit` و ابزار `govulncheck ./...` را در CI امنیتی سازمان اجرا کنید و releaseهای امنیتی Next 15 را دنبال کنید. نسخه‌ها و lockfileها در مخزن ثبت شده‌اند؛ imageهای پایه در استقرار با حساسیت بالا بهتر است پس از تأیید به digest قفل شوند.
+For urgent removal of a cached article, confirm the PostgreSQL status first, then recreate web:
 
-## خطای password authentication failed در migrate
+```bash
+docker compose up -d --force-recreate web
+```
 
-رمز `POSTGRES_PASSWORD` فقط هنگام ساخت volume جدید توسط image PostgreSQL اعمال می‌شود. تغییر `.env` یا بازسازی کانتینر، رمز نقش موجود در دیتابیس را تغییر نمی‌دهد. اگر migrate با این خطا متوقف شد، ابتدا مطمئن شوید تنظیمات فعلی همان رمز موردنظر شماست. برای هماهنگ کردن نقش محلی با رمز فعلی کانتینر، بدون حذف داده‌ها:
+This resets that container's local cache and may briefly interrupt requests. Apply equivalent invalidation to all web replicas and any external CDN caches. Uploaded image URLs use a one-year immutable cache and are independent of article publication status; changing a draft or deleting an article does not revoke a previously served image.
+
+## Troubleshooting
+
+### PostgreSQL password authentication fails
+
+`POSTGRES_PASSWORD` initializes a role only when the data volume is new. Editing `.env` or rebuilding a container does not update an existing database password. The Compose TCP health check detects a mismatch.
+
+First recreate the PostgreSQL service with the intended current environment. It can remain unhealthy until its stored role is updated:
+
+```bash
+docker compose up -d postgres
+```
+
+For this local Compose PostgreSQL instance, align the existing role with the container's configured password without deleting data:
 
 ```bash
 docker compose exec -T postgres sh -c 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
@@ -125,12 +224,23 @@ SQL
 docker compose up -d api web gateway
 ```
 
-این فرمان مخصوص PostgreSQL محلی همین Compose است و رمز نقش دیتابیس را تغییر می‌دهد؛ اگر مصرف‌کنندهٔ دیگری به همان دیتابیس متصل است، تنظیمات آن نیز باید هماهنگ باشد. رمز در خروجی ترمینال نمایش داده نمی‌شود. healthcheck اکنون با اتصال TCP احرازهویت‌شده تست می‌کند تا اختلاف رمز به‌اشتباه healthy گزارش نشود. برای رفع این خطا نیازی به `down -v`، حذف volume یا force کردن شمارهٔ migration نیست.
+This changes the database role password; update other clients of the same role too. It does not print the password. It assumes the role/database names still match the existing installation and the image's local socket access is available. If names also changed, use the original role/database through your database administration process. No volume deletion or forced migration version is needed.
 
-## رسانه و کش انتشار
+### Other common failures
 
-قبل از build نسخهٔ جدید، `bash scripts/init-env.sh` را اجرا کنید؛ در `.env` موجود فقط REVALIDATION_SECRET جدید اضافه می‌شود و رمز PostgreSQL/Redis عوض نمی‌شود. این راز در محیط runtime API و web یکسان و خصوصی است. در اجرای جداگانهٔ Go/Next، UPLOAD_DIR، WEB_REVALIDATION_URL و REVALIDATION_SECRET را مطابق env.example هر برنامه تنظیم کنید.
+| Symptom                                       | Check                                                                                                              |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Port 3000/80/443 already in use               | Stop the conflicting service or adjust gateway host ports; update `SITE_URL` and rebuild web if the origin changes |
+| Compose subnet overlaps another network       | Change both subnet and trusted proxy CIDRs                                                                         |
+| Migration fails                               | Inspect migrate/PostgreSQL logs and credentials; fix the underlying cause rather than forcing a version            |
+| Signup or other writes return 403             | Exact `Origin` must match configured origin, including scheme and port                                             |
+| Writes return 503                             | Redis connectivity, credentials, memory pressure, and readiness                                                    |
+| Requests return 429                           | Wait for the one-minute bucket; SSR requests from web can share a read quota                                       |
+| Upload returns 413                            | File/output size, 12-million-pixel limit, or 8,000-pixel axis limit                                                |
+| Upload returns 400                            | Actual PNG/JPEG data, exactly one `image` field, and no extra multipart fields                                     |
+| Media becomes 404 after a move                | Missing upload volume or mismatched database/media backup pair                                                     |
+| Save fails with 409                           | Duplicate slug or an article archived/deleted since its editor was opened                                          |
+| Email is absent                               | Mock driver, SMTP STARTTLS/authentication, provider policy, spam folder, or exhausted outbox jobs                  |
+| Changed site origin still appears in metadata | Rebuild the web image; public site URL is a build-time value too                                                   |
 
-volume `uploads_data` باید کنار backup PostgreSQL پشتیبان‌گیری و بازیابی شود؛ صرفاً dump دیتابیس شامل فایل‌های عکس نیست. مالک مسیر آپلود در image API کاربر 10001 است. فایل‌ها عمومی و UUID دارند؛ رسانهٔ محرمانه آپلود نکنید. برای چند replica روی میزبان‌های جدا، MediaStore باید با storage مشترک پیاده‌سازی شود؛ volume محلی Docker میان میزبان‌ها مشترک نیست.
-
-اگر انتشار موفق است اما محتوا تازه نمی‌شود، هشدار `site cache revalidation failed` در لاگ API، دسترسی API به WEB_REVALIDATION_URL و برابر بودن REVALIDATION_SECRET در دو سرویس را بررسی کنید. وب‌هوک بدون توکن معتبر 401 می‌دهد.
+The legacy Ghost scripts and GitHub Pages publish workflow do not deploy the current server platform. Refer to the [legacy guide](LEGACY_DEMO.md) only when working on the archived static demo.

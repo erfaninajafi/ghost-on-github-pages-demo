@@ -12,7 +12,7 @@ import {
   siteURL,
 } from "@/lib/api";
 import { jsonLD, safeHTML } from "@/lib/seo";
-import { readEditorContent } from "@/lib/editor";
+import { readEditorDocument } from "@/lib/editor";
 import { articleSlug } from "@/lib/article-path";
 import { Trending } from "@/components/post-card";
 import { Comments } from "@/components/comments";
@@ -119,7 +119,7 @@ export default async function Article({
           />
         )}
         <div
-          className={`prose-content${readEditorContent(post).content_format === "plain_text" ? " plain-text" : ""}`}
+          className={`prose-content${readEditorDocument(post).content_format === "plain_text" ? " plain-text" : ""}`}
           dangerouslySetInnerHTML={{ __html: safeHTML(post.content_html) }}
         />
         <div className="tag-list">

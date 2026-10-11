@@ -1,149 +1,138 @@
-# معماری وبلاگ ExpertsAcademy
+# Architecture
 
-## مرزهای سیستم
+ExpertsAcademy is a Persian publication with a Go API and a Next.js 15.5.27 frontend. PostgreSQL 16 is the durable source of truth. Redis provides short-lived caches, a view ranking mirror, and atomic rate limiting. Next.js accesses the versioned API and never connects directly to PostgreSQL.
 
-دادهٔ ماندگار در PostgreSQL 16 است. Redis برای کش کوتاه‌مدت پیشنهادها و محبوب‌ها، Sorted Set رتبهٔ بازدید و rate limit اتمیک استفاده می‌شود. Next.js 15.5.27 فقط از API نسخه‌دار استفاده می‌کند و دسترسی مستقیم به دیتابیس ندارد. دامنهٔ عملیاتی `https://blog.expertsacademy.ir` است.
+Endpoint details and request payloads are maintained in the [API reference](API_REFERENCE.md). Deployment settings are maintained in [operations](OPERATIONS.md).
+
+## Service boundaries
 
 ```mermaid
 flowchart LR
-  Browser[مرورگر RTL] --> Caddy[درگاه Caddy / TLS]
+  Browser[Persian RTL browser] --> Caddy[Caddy gateway and TLS]
   Caddy --> Web[Next.js App Router]
-  Caddy --> HTTP[chi HTTP / JWT / Origin / Rate limit]
+  Caddy --> HTTP[chi HTTP delivery]
   Web --> HTTP
-  HTTP --> UC[Use Cases]
+  HTTP --> UC[Use cases and authorization]
   UC --> Domain[Domain contracts]
-  UC --> Repo[PostgreSQL Repository / sqlc]
+  UC --> Repo[PostgreSQL repository and sqlc]
   Repo --> PG[(PostgreSQL)]
   UC --> Cache[(Redis)]
-  UC --> Outbox[Outbox worker]
-  Outbox --> SMTP[SMTP / Mock]
+  UC --> Media[Local media storage]
+  UC --> Outbox[Transactional email outbox]
+  Outbox --> Worker[API mail worker]
+  Worker --> Mail[SMTP or mock driver]
 ```
 
-## چیدمان پوشه‌ها
+Caddy routes `/api/v1/*` directly to Go and other paths to Next.js. Next.js server fetches use `API_INTERNAL_URL`; browser fetches remain same-origin. In native development, Next.js rewrites `/api/v1/*` to Go. API health endpoints are internal and are not routed through the public gateway.
+
+## Code layout
 
 ```text
 apps/api/
-  cmd/api/                  composition root و graceful shutdown
-  cmd/admin/                ساخت صریح مدیر، خارج از signup
-  internal/domain/          مدل‌ها، خطاهای کاربردی و قراردادهای وابستگی
-  internal/usecase/         مجوزها، انتشار، احراز هویت، نظرات، اعلان‌ها
-  internal/repository/      نگاشت مدل‌ها، تراکنش و خطاهای PostgreSQL
-    db/                     کد تولیدشده توسط sqlc؛ ویرایش دستی ممنوع
-  internal/delivery/http/   مسیرها، DTO ورودی، کوکی، JWT، CORS و لاگ
-  internal/platform/        تنظیمات و آداپتور Redis
-  pkg/mailer/               SMTP با STARTTLS اجباری و Mock
-  db/schema.sql             تصویر آخرین ساختار
-  db/migrations/            up/down قابل اجرا با golang-migrate
-  db/queries/blog.sql       منبع کوئری‌های تایپ‌سیف
-  sqlc.yaml                 تنظیمات تولید pgx/v5
+  cmd/api/                  Dependency composition, worker, graceful shutdown
+  cmd/admin/                Explicit administrator bootstrap
+  internal/domain/          Models, errors, dependency interfaces
+  internal/usecase/         Auth, authorization, content, media, comments
+  internal/repository/      PostgreSQL mapping, transactions, local media
+    db/                     Generated sqlc code; do not edit manually
+  internal/delivery/http/   Routes, strict JSON, cookies, JWT, Origin, logs
+  internal/platform/        Configuration, Redis, site revalidation
+  pkg/mailer/               SMTP with mandatory STARTTLS and mock driver
+  db/schema.sql             Current schema snapshot
+  db/migrations/            Numbered golang-migrate up/down files
+  db/queries/blog.sql       Typed query sources
+  sqlc.yaml                 pgx/v5 generation configuration
 apps/web/
-  app/                      مجله، مقاله، studio، RSS، sitemap و robots
-  components/               UI مجله، جستجو، تم و نظرات
-  lib/                      قراردادهای TypeScript، API client و SEO
-  public/                   تصویر OpenGraph و منبع SVG آن
+  app/                      Publication, article, studio, metadata and feeds
+  components/               Editor, password controls, comments and account UI
+  lib/                      API client, types, editor documents, safe HTML, SEO
+  tests/                    Frontend behavior and helper tests
+  public/                   Local OpenGraph image and SVG source
 ```
 
-Domain به هیچ framework وابسته نیست. Use Case از interfaceهای Domain استفاده می‌کند. Repository خروجی sqlc را به مدل‌های دامنه نگاشت می‌کند. HTTP فقط دریافت ورودی، نشست و تبدیل خطا به پاسخ را بر عهده دارد. `cmd/api` وابستگی‌ها را به هم متصل می‌کند. ثبت مقاله و تگ‌ها یک تراکنش است؛ خطای تگ باعث rollback تمام تغییر مقاله می‌شود.
+Domain contracts have no framework dependency. Use cases enforce business rules through these interfaces. Repositories map sqlc results into domain models and translate database errors. HTTP delivery handles transport and sessions. Saving an article and replacing its tags is transactional: an invalid tag rolls back the entire save.
 
-## دیتابیس و migration
+## Database and migrations
 
-`citext` یکتایی ایمیل را بدون حساسیت به بزرگی حروف تأمین می‌کند. شناسه‌ها UUID v4 هستند. `pg_trgm` برای جستجوی زیررشتهٔ فارسی و فهرست پیشنهادها به کار می‌رود. نقش و وضعیت با CHECK در دیتابیس محدود می‌شوند؛ ایمیل نویسنده و مهمان هرگز از پاسخ عمومی کامنت خارج نمی‌شود. FK ترکیبی `(parent_id, post_id)` نمی‌گذارد پاسخ متعلق به مقالهٔ دیگری باشد.
+The seven application tables are users, posts, categories, tags, post_tags, comments, and email_outbox. UUIDs identify records. `citext` provides case-insensitive email uniqueness. Database checks constrain roles and statuses. A composite foreign key on `(parent_id, post_id)` prevents cross-article comment replies.
 
-ایندکس‌های جزئی انتشار و محبوبیت فقط مقاله‌های منتشرشده را پوشش می‌دهند. ایندکس category و post_tags برای فیلترها، و ایندکس‌های post/status/created_at و parent برای نظرات هستند. عنوان و HTML دارای GIN trigram هستند. یک GIN روی `to_tsvector('simple', title || ' ' || content_html)` نیز برای توسعهٔ جستجوی full-text وجود دارد. `simple` ریشه‌یاب فارسی نیست؛ suggestion فعلی از ILIKE با escape کردن `%` و `_` استفاده می‌کند. ورودی و عنوان با تبدیل «ي/ك» به «ی/ک» نرمال می‌شوند. حداقل جستجو ۲ حرف، حداکثر ۱۰۰ حرف و حداکثر پاسخ ۸ مقاله است.
+Partial publication and popularity indexes cover public posts. Category, tag, and comment indexes support filtering and tree traversal. GIN trigram indexes support substring search; a `simple` text-search index is also present for future full-text work. The current suggestion query uses escaped `ILIKE`, not a Persian stemming engine. Search normalizes Arabic variants of yeh and kaf to Persian equivalents, accepts 2–100 Unicode characters, and returns up to eight results.
 
-تغییر schema باید هم در migration جدید و هم در `schema.sql` اعمال شود. پس از تغییر کوئری:
+| Migration                      | Change                                                  |
+| ------------------------------ | ------------------------------------------------------- |
+| `000001_init`                  | Initial tables, constraints, extensions, and indexes    |
+| `000002_editorial_permissions` | Disabled accounts and archived/deleted article statuses |
+| `000003_post_cover`            | Nullable cover image URL                                |
 
-```bash
-cd apps/api
-sqlc generate
-```
+Mixed content blocks use the existing JSON column and require no new migration. Keep `schema.sql`, migrations, query sources, and sqlc output consistent. CI uses sqlc 1.30.0 and rejects generated-code drift. Down migrations are for controlled rollback or disposable tests: the initial down migration drops application tables, while the editorial rollback converts newer statuses to private drafts. Extensions are retained during rollback.
 
-نسخهٔ مولد 1.30.0 است؛ CI اختلاف کد تولیدشده با فایل‌های commit شده را رد می‌کند. Migration اولیه برگشت‌پذیر است، اما down آن تمام داده‌های برنامه را حذف می‌کند؛ rollback پروداکشن باید با پشتیبان و تصمیم عملیاتی انجام شود. اکستنشن‌ها در down حذف نمی‌شوند چون ممکن است مصرف‌کنندهٔ دیگری داشته باشند.
+## Accounts and authorization
 
-## قرارداد HTTP
+Public signup creates `author` accounts. Only the administrator CLI creates an administrator. Passwords use bcrypt cost 12 and must contain 12–72 UTF-8 bytes at the API boundary. The registration UI additionally checks matching confirmation and a minimum length of 12 JavaScript string units; confirmation is never sent to the API. The login and registration eye buttons change field visibility only.
 
-تمام مسیرها با `/api/v1` آغاز می‌شوند. JSON UTF-8 است. تاریخ‌ها RFC3339 و IDها UUID هستند. فهرست خالی `[]` برمی‌گردد. پاسخ خطا به شکل زیر است:
+Sessions are HS256 JWTs with an eight-hour expiry, issuer `expertsacademy-api`, and audience `expertsacademy-web`. The `ea_session` cookie is HttpOnly, SameSite=Lax, and Secure in production. Bearer authentication is supported, but login/signup return the user and set a cookie rather than returning a token field. Each authenticated request reloads the user from PostgreSQL, so disabling an account blocks subsequent requests and login.
 
-```json
-{"error":{"code":"invalid_input","message":"اطلاعات واردشده معتبر نیست."}}
-```
+All writes require an exact matching `Origin`, including Bearer requests and multipart uploads. JSON writes reject unknown fields, trailing JSON documents, and bodies above 1 MiB. Invalid browser cookies are cleared on public reads, which continue as guest requests; explicit invalid Bearer credentials and protected operations fail with 401. Logout clears the browser cookie. There is no token revocation store: a copied token remains usable until expiry unless the account is disabled or the signing key changes.
 
-وضعیت‌ها: 400 ورودی نامعتبر، 401 نشست نامعتبر، 403 مجوز/Origin، 404 رکورد غیرقابل‌دسترسی، 409 تضاد یکتایی/ارتباط، 429 محدودیت نرخ، 503 ناتوانی در محدودسازی نوشتن و 500 خطای داخلی. جزئیات SQL در پاسخ افشا نمی‌شود. حداکثر بدنه ۱ MiB است؛ فیلد اضافی یا چند سند JSON پذیرفته نمی‌شود.
+Authors manage only their own active articles. Administrators manage all articles, taxonomy, authors, and comments. Editing another person's article preserves its author. Disabling an author does not hide that author's published articles. Archive and soft-delete operations exclude articles from public queries; restoration always produces a private draft. SQL save guards reject archived/deleted records, including races with stale editor forms.
 
-### احراز هویت
+## Editor documents and rendering
 
-- `POST /auth/signup`: `{email,password}`؛ ثبت‌نام عمومی بدون دعوت، رمز ۱۲–۷۲ **بایت** و نقش خروجی همواره `author` است. `name` اختیاری با طول ۲–۱۰۰ حرف است؛ در صورت نبودن، نام نمایشی «نویسنده» ذخیره می‌شود.
-- `POST /auth/login`: `{email,password}`؛ پاسخ User و کوکی `ea_session`.
-- `POST /auth/logout`: حذف کوکی، پاسخ 204.
-- `GET /auth/me`: مشخصات نشست نویسنده/مدیر؛ hash هرگز برگردانده نمی‌شود.
+The editor represents content as ordered text, image, and link blocks in either `plain_text` or `html` format. The API validates at most 200 blocks and a combined 500,000 bytes of text, URLs, and alternative text. Managed image widths are integers from 80 to 2,000 pixels. Uploaded images must exist and belong to the article's author or the acting author; administrators may reuse other accounts' uploads. Managed links accept HTTP/HTTPS URLs or root-relative paths, excluding credentials, protocol-relative addresses, backslashes, and control characters.
 
-JWT امضاشده با HS256، audience و issuer ثابت و انقضای ۸ ساعت است. کوکی HttpOnly، SameSite=Lax و در production Secure است. نقش از دیتابیس خوانده می‌شود، نه از ادعای کلاینت. Bearer نیز برای کلاینت‌های API قابل استفاده است. درخواست‌های نوشتن حتی با Bearer باید هدر `Origin` برابر `CORS_ORIGIN` و Content-Type JSON داشته باشند. در محیط production از یک origin و TLS استفاده می‌شود. logout کوکی مرورگر را پاک می‌کند؛ توکن کپی‌شده تا انقضا معتبر می‌ماند. rotation کلید JWT تمام نشست‌ها را بی‌اعتبار می‌کند. کوکی نامعتبر در خواندن عمومی پاک می‌شود و درخواست به‌صورت مهمان ادامه می‌یابد؛ عملیات نوشتن، پنل و Bearer نامعتبر همچنان 401 می‌دهند.
+The server creates `content_json` version 2 with the format, an empty `content` string, and validated blocks. Plain text is escaped with paragraph and line-break handling. HTML text blocks are combined with generated image/link markup, then sanitized with Bluemonday. Original HTML block strings are stored for editing and must not be rendered directly. Public pages and editor previews sanitize rendered HTML again with `sanitize-html`. CSS constrains images to available width and preserves aspect ratio.
 
-### مجلهٔ عمومی
+Compatibility paths remain available: explicit `content_format` with `content_text` or `content_html` creates a version 1 editor document. Clients omitting the format retain the older sanitized HTML plus client JSON behavior. Legacy articles open as a text block in the new editor. Raw HTML image tags remain editable in HTML source; they do not automatically become managed resize controls.
 
-- `GET /posts?page=1&limit=12&category=engineering&tag=go`: فیلترها **slug** هستند. limit از ۱ تا ۵۰ و page از ۱ تا ۱۰۰۰۰. خروجی `{items,total,page,limit}`. ترتیب انتشار و ID نزولی، فقط published و published_at گذشته. بدنهٔ محتوا از فهرست حذف می‌شود.
-- `GET /posts/popular`: حداکثر ۶ مقاله، مرتب بر اساس بازدید انباشتهٔ تمام عمر. این رتبه‌بندی پنجرهٔ هفتگی نیست.
-- `GET /posts/search-suggest?q=...`: حداکثر ۸ مقاله، اولویت تطابق عنوان و سپس بازدید؛ نتایج کوتاه بدون بدنهٔ HTML.
-- `GET /posts/{slug}`: مقاله و تگ‌ها همراه افزایش اتمیک `views_count`. `?count_view=false` برای واکشی SSR، SEO و پیش‌نمایش بدون افزایش بازدید است.
-- `GET /taxonomy`: `{categories:[],tags:[]}` برای فیلتر و ویرایشگر.
-- `GET /posts/{id}/comments`: آرایهٔ ریشه‌ها با `replies` بازگشتی؛ فقط زنجیره‌های کاملاً تأییدشده.
-- `POST /posts/{id}/comments`: `{author_name,author_email,content,parent_id}`؛ parent_id برابر null یا ID نظر تأییدشدهٔ همین مقاله. متن ۲–۵۰۰۰ حرف، نام ۲–۱۰۰ حرف و ایمیل معتبر. خروجی 201 با status=pending. برای نشست معتبر، نام و ایمیل از حساب خوانده می‌شوند.
+Publishing requires text remaining after sanitization; an image-only article is rejected. Reading time is rounded up at 200 words per minute with a minimum of one minute. Republish retains the original first publication date. The editor has no autosave. Hidden tab panels preserve unsaved state within the page; uploads and saves lock relevant controls, and an unfinished link panel blocks saving until completed or canceled.
 
-نمای عمومی Comment: `id,post_id,user_id?,parent_id,author_name,content,status,created_at,updated_at,replies`. ایمیل فقط در دیتابیس و مسیر ارسال ایمیل استفاده می‌شود.
+## Media storage
 
-### پنل تحریریه
+The upload endpoint accepts one PNG/JPEG image, validates actual decoder output, and enforces 5 MiB input and output limits, at most 12 million pixels, and at most 8,000 pixels on either axis. The multipart request has a separate 64 KiB overhead allowance. Two decode slots bound simultaneous processing per API process. Re-encoding strips metadata and appended payloads.
 
-- `GET /studio/posts`: تا ۲۰۰ مقالهٔ آخر و فعال نویسنده؛ مدیر مقاله‌های همهٔ حساب‌ها و آرشیو را می‌بیند. مقاله‌های حذف‌شده در `GET /studio/posts?status=deleted` فقط برای مدیر دریافت می‌شوند.
-- `POST /studio/posts`: ایجاد یا ویرایش. `id` خالی یعنی ایجاد؛ ID موجود فقط برای مالک یا مدیر قابل ویرایش است. فیلدها: `id,category_id,slug,title,content_format,content_text,content_html,content_json,cover_image_url,excerpt,status,tag_ids`.
-- `GET /studio/comments?status=pending`: تا ۲۰۰ نظر قدیمی در وضعیت pending (پیش‌فرض)، approved یا spam؛ فقط مدیر مجاز است و نظرات همهٔ مقاله‌ها را می‌بیند.
-- `PATCH /studio/comments/{id}`: `{status:"approved"}` یا `spam` یا `pending`. فقط مدیر مجاز است. تغییر همزمان با قفل رکورد سریالی می‌شود.
-- `POST /studio/media`: مدیر و نویسنده؛ multipart/form-data با یک فایل `image`. PNG/JPEG، حداکثر ۵MiB و ۱۲ میلیون پیکسل؛ خروجی 201 `{url,width,height}`. نام فایل UUID در namespace حساب است؛ هیچ filename ارسالی کلاینت استفاده نمی‌شود.
-- `GET /media/{owner}/{file}`: خواندن تصویر ثابت و عمومی با MIME مشخص، nosniff و کش immutable. رسانهٔ پیش‌نویس نیز با داشتن URL قابل خواندن است؛ این مسیر برای رسانهٔ محرمانه نیست.
-- `GET /studio/authors?page=1&limit=20`: فقط مدیر؛ خروجی `{items,total,page,limit}` و حساب‌های author؛ limit حداکثر ۵۰. hash رمز در JSON وجود ندارد.
-- `POST /studio/authors`: فقط مدیر؛ `{name,email,password}`، خروجی 201 حساب نویسنده بدون تغییر کوکی نشست مدیر.
-- `PATCH /studio/authors/{id}`: فقط مدیر؛ `{name,email,disabled}`. شرط `role='author'` در SQL مانع تغییر حساب مدیر می‌شود؛ غیرفعال‌کردن حساب با `disabled_at` و بررسی آن در login و هر درخواست JWT اعمال می‌شود.
-- `PATCH /studio/posts/{id}/status`: فقط مدیر؛ `{status:"archived"}` یا `{status:"draft"}`. آرشیو از نمایش عمومی خارج می‌شود؛ بازگردانی همواره پیش‌نویس است.
-- `DELETE /studio/posts/{id}`: فقط مدیر؛ خروجی 204، حذف نرم با status=deleted؛ محتوا، کامنت‌ها و برچسب‌ها حفظ می‌شوند.
-- `POST /studio/taxonomy/categories` و `/studio/taxonomy/tags`: `{name,slug}`؛ فقط مدیر.
+`LocalMedia` uses an account UUID namespace and a generated file UUID, temporary writes, and atomic rename. Client filenames are not used. The API container runs as UID 10001; Compose mounts `uploads_data` at `/data/uploads`. Upload URLs are public and have a one-year immutable cache policy, including files associated with drafts or unsaved articles. Media is not confidential storage. Removing a cover or block removes its reference, not its file; no garbage collector is implemented.
 
-نقش نویسنده به ایجاد، ویرایش و انتشار مقالهٔ خودش محدود است؛ مدیریت نویسندگان، نظرات، taxonomy، آرشیو، حذف و سطل حذف مخصوص مدیر است. ایجاد مقاله توسط مدیر، author_id خود مدیر را ثبت می‌کند؛ ویرایش مقالهٔ دیگران مالکیت آن را تغییر نمی‌دهد. تغییر وضعیت در یک UPDATE اتمیک انجام و revision کش invalid می‌شود. SavePost در SQL اجازهٔ تغییر رکورد archived/deleted را نمی‌دهد تا فرم قدیمی یا رقابت درخواست‌ها نتواند تصمیم مدیر را دور بزند. migration شمارهٔ ۲ بدون حذف داده، وضعیت‌ها و disabled_at را اضافه می‌کند؛ rollback وضعیت‌های جدید را به draft خصوصی تبدیل می‌کند.
+Covers are optional and appear on cards, articles, OpenGraph, Twitter, and JSON-LD. Next/Image optimizes local cover images. Inline images use their width attributes and responsive CSS. Database dumps do not contain uploaded bytes; both stores must be backed up together.
 
-slug از حروف Unicode، عدد و خط تیره تشکیل می‌شود؛ عنوان حداکثر ۲۴۰ حرف، خلاصه ۵۰۰ حرف، HTML حداکثر ۵۰۰ هزار بایت و تگ‌ها حداکثر ۲۰ شناسهٔ یکتا هستند. `content_format` برابر `plain_text` یا `html` است؛ نبودن آن برای سازگاری با کلاینت‌های قبلی HTML در نظر گرفته می‌شود. در حالت plain_text ورودی `content_text` توسط سرور escape و به پاراگراف/شکست خط تبدیل می‌شود. در حالت html ورودی `content_html` با Bluemonday پاک‌سازی می‌شود. برای قالب صریح، سرور `content_json={version:1,format,content}` را می‌سازد و به metadata ارسالی کلاینت اعتماد نمی‌کند؛ source متن ساده و HTML پاک‌سازی‌شده برای ویرایش بعدی نگهداری می‌شوند. انتشار متن خالی بعد از پاک‌سازی رد می‌شود. زمان مطالعه با ۲۰۰ واژه در دقیقه و حداقل ۱ دقیقه محاسبه می‌شود. تغییر status به draft دسترسی عمومی API را قطع می‌کند؛ کش ISR ممکن است تا دور بازاعتبارسنجی بعدی نسخهٔ قبلی را نشان دهد.
+## Comments and email
 
-## درخت نظرات
+A recursive SQL query starts at approved roots and traverses only approved children. The result is built into a tree in O(n), without N+1 database queries. A comment is visible only when its full ancestor chain is approved. Marking a parent as spam or pending hides the whole branch. Parents are immutable; cross-article references and depth beyond eight levels are rejected. Public trees are currently unpaginated.
 
-کوئری `WITH RECURSIVE tree` از ریشه‌های approved در یک مقاله شروع می‌کند و به فرزندانی می‌رسد که خودشان approved هستند. نتیجه در یک round trip دریافت می‌شود؛ N+1 وجود ندارد. Use Case با نگاشت ID به اشاره‌گر، در زمان O(n) ساختار `replies` را تشکیل می‌دهد. ترتیب فرزندان بر اساس created_at و ID پایدار است.
+Every comment, including those from administrators and authors, starts pending. A new comment and its notification to the article author are committed in one transaction. Approving a reply and queuing a notification to its parent commenter are also transactional. Repeating approval while already approved does not enqueue another notification; moving out of approved and approving again can do so. Comment emails and password hashes are excluded from JSON responses.
 
-parent پس از ایجاد قابل تغییر نیست؛ API نمی‌تواند چرخه ایجاد کند. پیش از reply، کوئری بازگشتی ancestors عمق را محاسبه می‌کند. حداکثر عمق ۸ سطح، شامل ریشه است. UI نیز در سطح هشتم دکمهٔ پاسخ نشان نمی‌دهد. spam شدن ریشه، کل شاخهٔ فرزندان آن را از خروجی عمومی پنهان می‌کند. برای نمایش کامل تاریخچه، فعلاً صفحه‌بندی درخت وجود ندارد؛ پیش از مقیاس بسیار بزرگ، سیاست صفحه‌بندی ریشه‌ها را اضافه کنید.
+The mail worker polls every two seconds and claims up to 20 jobs per cycle. Atomic updates with `FOR UPDATE SKIP LOCKED` grant five-minute leases, allowing multiple workers. Each attempt has a 20-second timeout, and jobs stop being retried after 12 attempts. Delivery is at least once: SMTP success followed by failure to record `sent_at` can produce a duplicate. A stable job-based Message-ID helps identify repeats. SMTP requires STARTTLS; implicit TLS on port 465 is unsupported. Mock mail logs job IDs rather than recipients or message bodies, and is rejected in production.
 
-## ایمیل و دوام
+## Caching, revalidation, and view counts
 
-ثبت نظر و اعلان نویسنده در یک تراکنش انجام می‌شود. تأیید پاسخ و اعلان به ایمیل والد نیز یک تراکنش است. تغییر تکراری approved در همان وضعیت، job تکراری نمی‌سازد. worker هر ۲ ثانیه حداکثر ۲۰ job می‌گیرد. `FOR UPDATE SKIP LOCKED` همراه UPDATE اتمیک، lease پنج‌دقیقه‌ای می‌سازد؛ چند replica می‌توانند صف را پردازش کنند. هر تلاش timeout بیست‌ثانیه‌ای دارد؛ پس از ۱۲ شکست، job برای رسیدگی عملیاتی باقی می‌ماند.
+| Layer                                 | Behavior                                                                           |
+| ------------------------------------- | ---------------------------------------------------------------------------------- |
+| PostgreSQL views                      | Atomic lifetime count; durable                                                     |
+| Redis ranking                         | ZSET mirror with `ZADD GT` to prevent older concurrent scores replacing newer ones |
+| Redis suggestions/popular             | 20-second TTL, revision namespacing after article changes                          |
+| Next.js article and post list fetches | 60-second revalidation; tagged by article slug or `posts`                          |
+| Next.js popular fetch                 | 30-second revalidation; tagged `posts`                                             |
+| Next.js taxonomy fetch                | 60-second revalidation; no article cache tag                                       |
 
-این تضمین **at-least-once** است: اگر SMTP موفق باشد اما ثبت sent_at شکست بخورد، ایمیل ممکن است دوباره ارسال شود. Message-ID بر اساس UUID ثابت job ساخته می‌شود. SMTP نیازمند STARTTLS معتبر است و محتوای ایمیل متن ساده است. Mock فقط job ID را لاگ می‌کند؛ بدنه و ایمیل مهمان در لاگ نمی‌آیند. production استفاده از Mock را رد می‌کند.
+Popular results are read from PostgreSQL and cached; they are lifetime rankings, not weekly or unique-visitor counts. Server-rendered article fetches use `count_view=false`. The browser sends a countable detail request after 800 ms. Ordinary detail GETs count as views, including automated clients.
 
-## کش، بازدید و خطاها
+Articles use `generateStaticParams=[]` and 60-second ISR. Metadata and page content share a memoized loader. A successful save or status change asks the web service to revalidate old/new slugs, `posts`, the home page, sitemap, and RSS. The independent private `REVALIDATION_SECRET` is compared in constant time by `POST /api/revalidate`. A failed webhook logs a warning without undoing a committed article; periodic revalidation remains a fallback. Cached pages may outlive a publication status change, particularly during upstream failure; ISR is unsuitable for confidential content.
 
-هر GET جزئیات عادی یک بازدید است؛ unique visitor یا شمارش انسان واقعی ادعا نمی‌شود. افزایش SQL اتمیک است. Redis ZSET با score برابر شمارندهٔ PostgreSQL و ZADD GT به‌روز می‌شود تا ترتیب درخواست‌های همزمان score را عقب نبرد. محبوب‌ها از دادهٔ انباشتهٔ PostgreSQL بازیابی و در Redis کش می‌شوند؛ از دست رفتن Redis شمارنده‌ها را از بین نمی‌برد. TTL کش پیشنهادها و محبوب‌ها ۲۰ ثانیه است. انتشار/ویرایش revision کش را افزایش می‌دهد تا نتیجهٔ قدیمی در generation تازه ذخیره نشود. اگر Redis قطع شود، خواندن به PostgreSQL برمی‌گردد؛ نوشتن به دلیل نبود rate limit پاسخ 503 می‌دهد.
+Article slugs are decoded and validated before building an API URL, then encoded once. This avoids double-encoding Persian paths. Changing a slug invalidates its cached paths but does not create an automatic redirect or update existing links.
 
-rate limit با Lua اتمیک روی Redis: خواندن ۱۸۰، نوشتن ۲۰ و عملیات ورود/ثبت‌نام/خروج ۸ درخواست در دقیقه به ازای IP و bucket. خطای نرخ Retry-After=60 دارد. فقط peerهای تعریف‌شده در `TRUSTED_PROXY_CIDRS` می‌توانند IP forward کنند. در Compose شبکهٔ خصوصی اختصاصی اعتماد می‌شود و فقط Caddy عمومی است. API مستقیم را روی اینترنت expose نکنید.
+## Rate limiting and dependency failures
 
-## فرانت‌اند و SEO
+Redis Lua scripts implement per-IP buckets: 180 reads, 20 non-auth writes, and eight auth POSTs per minute. A rate rejection includes `Retry-After: 60`. The limiter has a 500 ms dependency deadline. If Redis fails, reads may continue against PostgreSQL; writes return 503. API readiness still reports Redis failure.
 
-`lang=fa` و `dir=rtl` در ریشه؛ margin/padding و border منطقی؛ Vazirmatn به‌صورت self-host؛ پالت روشن/تاریک با next-themes و حفظ ترجیح کاربر. جستجو دارای debounce ۲۵۰ms، AbortController، حالت انتظار و خطا و لغو با Escape است.
+Only peers matching `TRUSTED_PROXY_CIDRS` may provide forwarded addresses; the implementation uses the last `X-Forwarded-For` value. Compose trusts its dedicated `172.30.58.0/24` network and exposes only Caddy. A CDN or additional reverse proxy needs deliberate forwarding configuration. Server-side Next.js requests can share one source IP and therefore the read bucket; large sitemap generation or concurrent cache misses can reach that limit.
 
-مقاله با `generateStaticParams=[]` در اولین مراجعه ساخته و هر ۶۰ ثانیه بازاعتبارسنجی می‌شود. metadata و محتوا از یک تابع memoized خوانده می‌شوند؛ واکشی سرور بازدید را زیاد نمی‌کند. ViewCounter مرورگر پس از ۸۰۰ms GET شمارش‌دار می‌فرستد. API همچنان منبع وضعیت نهایی انتشار است؛ ISR برای محتوای محرمانه مناسب نیست. HTML پیش از رندر دوباره با sanitize-html محدود می‌شود. JSON-LD نویسهٔ `<` را escape می‌کند. author/publisher اسکیما سازمان ExpertsAcademy است.
+## Frontend and SEO
 
-`sitemap.xml` همهٔ مقاله‌های عمومی را با صفحه‌های ۵۰تایی می‌خواند. `rss.xml` آخرین ۵۰ مقاله و خلاصهٔ escapeشدهٔ XML را ارائه می‌کند. robots پنل و API را از crawler منع می‌کند؛ این جایگزین کنترل دسترسی نیست. OpenGraph PNG محلی دارد. تم و صفحات عمومی با JavaScript اندک و بدون درخواست فونت ثالث ارائه می‌شوند.
+The root uses `lang=fa` and `dir=rtl`, logical spacing, locally hosted Vazirmatn, and persisted light/dark preferences. Public search debounces for 250 ms, aborts obsolete requests, and closes with Escape. The editor's internal-link search uses a 300 ms debounce and published article suggestions.
 
-## آزمون و مشاهده‌پذیری
+Article metadata includes canonical URLs, OpenGraph, Twitter, and escaped JSON-LD. Structured-data author and publisher currently identify the ExpertsAcademy organization rather than individual authors. There are no dedicated public author profile pages. RSS contains the latest 50 published articles, and the sitemap paginates through public articles in batches of 50. Robots disallows the studio and API; studio metadata is noindex/nofollow. These crawler directives do not enforce access control.
 
-تست‌ها مجوز انتشار، نقش signup، hash رمز، XSS، JWT، Origin، JSON سختگیرانه، درخت و عمق reply را پوشش می‌دهند. تست PostgreSQL در schema جداگانه: citext، فیلتر فارسی، rollback تگ، تأیید همزمان و صف ایمیل، مخفی شدن شاخه، FK بین مقالات و افزایش بازدید همزمان. Redis نرخ و expiry واقعی تست می‌شود. تست‌های وب escape شدن HTML، JSON-LD و RSS را بررسی می‌کنند.
+## Observability and scaling limits
 
-لاگ ساختاریافتهٔ JSON شامل request ID، نام route، method، status و مدت است؛ متن مقاله، ایمیل و رمز لاگ نمی‌شود. `/healthz` زنده بودن پروسه و `/readyz` اتصال PostgreSQL و Redis را بررسی می‌کند. timeoutهای HTTP، سقف اتصال pool و graceful shutdown تنظیم شده‌اند.
+Structured JSON request logs include request ID, route, method, status, and duration. Request bodies, passwords, and guest comment emails are not part of those request logs. `/healthz` checks process liveness; `/readyz` checks PostgreSQL and Redis. HTTP timeouts, pool limits, and graceful shutdown are configured.
 
-## تصویر جلد و بازاعتبارسنجی انتشار
-
-Migration شمارهٔ ۳ ستون nullable `cover_image_url` را اضافه می‌کند؛ مقاله بدون تصویر مجاز است. Use Case با DecodeConfig نوع و ابعاد واقعی را کنترل و فایل را مجدداً PNG/JPEG encode می‌کند تا metadata و محتوای اضافه باقی نماند. حداکثر دو پردازش تصویر همزمان در هر API انجام می‌شود. Repository `LocalMedia` فایل را با نام تولیدشده، نوشتن موقت و rename اتمیک در `UPLOAD_DIR` می‌گذارد. Compose از volume مستقل `uploads_data` استفاده می‌کند؛ تعویض image یا restart فایل‌ها را حذف نمی‌کند. Save وجود فایل را کنترل می‌کند و نویسنده نمی‌تواند URL آپلود حساب دیگری را به مقالهٔ خودش متصل کند؛ ادمین می‌تواند جلد مقالهٔ دیگران را تغییر دهد. برداشتن جلد فقط ارجاع دیتابیس را پاک می‌کند، نه فایل را؛ پاک‌سازی رسانهٔ بدون ارجاع نیازمند سیاست نگهداری و بررسی نسخه‌های پشتیبان است.
-
-نامک مسیر Next.js پیش از ساخت URL API یک بار decode و اعتبارسنجی می‌شود؛ سپس API URL فقط یک بار encode می‌شود. این از 404 نامک فارسی بر اثر double encoding جلوگیری می‌کند. بعد از Save یا تغییر status، API سرویس `SiteCache` را برای نامک قبلی/جدید صدا می‌زند. وب‌هوک داخلی `POST /api/revalidate` با `REVALIDATION_SECRET` مستقل و مقایسهٔ ثابت‌زمان حفاظت می‌شود؛ دادهٔ fetch با tagهای posts و post:slug و مسیرهای مقاله، صفحهٔ اصلی، sitemap و RSS بازاعتبارسنجی می‌شوند. این راز هرگز NEXT_PUBLIC نیست. قطع وب‌هوک، ذخیرهٔ موفق دیتابیس را ناموفق گزارش نمی‌کند؛ هشدار در لاگ و ISR دوره‌ای مسیر پشتیبان‌اند. عکس جلد در کارت، Article، OpenGraph، Twitter و JSON-LD استفاده می‌شود و Next/Image اندازه‌های مناسب را تولید می‌کند.
+Studio articles are limited to the newest 200 non-deleted records, with a separate 200-record trash query. Archive/ownership filters are client-side within that set. Comment moderation returns the oldest 200 in each status; author accounts are paginated. Pagination, shared media storage, coordinated cache invalidation across web replicas, and server-rendered rate-limit handling need further work for larger or multi-host deployments. See [verification](VERIFICATION.md) for actual test evidence and [operations](OPERATIONS.md) for deployment procedures.

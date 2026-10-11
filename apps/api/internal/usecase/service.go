@@ -161,6 +161,7 @@ type PostInput struct {
 	ContentFormat string          `json:"content_format"`
 	ContentText   string          `json:"content_text"`
 	ContentJSON   json.RawMessage `json:"content_json"`
+	ContentBlocks []ContentBlock  `json:"content_blocks"`
 	CoverImageURL *string         `json:"cover_image_url"`
 	Excerpt       string          `json:"excerpt"`
 	Status        string          `json:"status"`
@@ -218,6 +219,9 @@ func (s *Service) Save(ctx context.Context, u domain.User, in PostInput) (domain
 		if err := s.validateCover(ctx, u, author, *in.CoverImageURL); err != nil {
 			return domain.Post{}, err
 		}
+	}
+	if err := s.validateContentBlocks(ctx, u, author, in); err != nil {
+		return domain.Post{}, err
 	}
 	html, contentJSON, e := prepareContent(in)
 	if e != nil {

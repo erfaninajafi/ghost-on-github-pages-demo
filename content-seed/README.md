@@ -1,29 +1,29 @@
-# Content seed
+# Historical Ghost content seed
 
-This folder contains a Ghost export used to reproduce the demo blog content.
+This folder contains `demo-posts.json`, a Ghost export used to reproduce the earlier static demo. It is not a PostgreSQL seed for ExpertsAcademy, and Docker startup does not import it. A fresh platform database contains no sample articles or default accounts.
 
-## Import into a fresh Ghost install
+## Reproduce the historical demo
+
+Use a dedicated Ghost/archive environment. The export metadata identifies Ghost 6.50.0. Set up its administrator account before importing. In Ghost Admin, use Settings → Advanced → Import/Export and the Universal import option to upload `demo-posts.json`, following the [official Ghost import guide](https://ghost.org/help/imports/).
+
+For a compatible Ghost CLI installation, start the server before running its authenticated import command. `/absolute/path/to/repository` must point to this checkout:
 
 ```bash
 cd ~/.ghost/current
-ghost import /path/to/ghost-on-github-pages-demo/content-seed/demo-posts.json
 ghost start
+ghost import /absolute/path/to/repository/content-seed/demo-posts.json
 ```
 
-Then regenerate and publish:
+The CLI import prompts for credentials; see Ghost's [restore instructions](https://ghost.org/docs/reinstall/). The export contains demo posts about v3, getting started, and the Classic v2 archive. `scripts/sanitize-seed.js` is the repository's helper for stripping sensitive export data before committing it. Configure credentials through Ghost's own administrator workflow. Historical `seed-content.js`/`seed-content.ps1` scripts use fixed local demo credentials and modify Ghost content/settings; they are not platform seeders.
 
-```bash
-# macOS / Linux
-./scripts/deploy-demo.sh
+For Windows archive generation, run from the repository root:
 
-# Windows
+```powershell
 powershell -ExecutionPolicy Bypass -File scripts/generate-static.ps1
-node scripts/post-process-static.js
-# commit and push static/ manually
 ```
 
-## Notes
+That script generates and postprocesses `static/` itself; it does not deploy ExpertsAcademy. Review its hardcoded Ghost paths and historical domain first. The Bash `scripts/deploy-demo.sh` is an archive publication script that commits and force-pushes its Ghost publish checkout; read the [legacy guide](../docs/LEGACY_DEMO.md) before using it.
 
-- Secrets are stripped from this export before commit (`scripts/sanitize-seed.js`).
-- After import, create a new admin account if prompted, or update credentials in Ghost Admin.
-- Default demo content includes posts about v3, getting started, and a link to the Classic v2 archive.
+## Current application
+
+Use the [project README](../README.md) to start ExpertsAcademy and the [user guide](../docs/USER_GUIDE.md) to create articles through its studio. Moving Ghost content into the current database requires an explicit import implementation; one is not included.

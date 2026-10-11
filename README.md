@@ -1,45 +1,84 @@
 # ExpertsAcademy Blog
 
-وبلاگ سازمانی اکسپرتس آکادمی برای `https://blog.expertsacademy.ir` با Go، PostgreSQL، Redis و Next.js 15.
+A Persian, right-to-left publication for `https://blog.expertsacademy.ir`, with a Go API, PostgreSQL, Redis, and a Next.js frontend. The studio supports author accounts, article publishing, plain-text and HTML content with multiple resizable images and links, and separate administrator tabs for comments and authors.
 
-## اجرای محلی
+The application interface remains Persian. Project documentation is in English.
 
-پیش‌نیاز: Docker Engine و Compose v2، Python 3 و حداقل ۶ گیگابایت فضای آزاد برای اولین build.
+## Run locally
+
+Run these commands from the repository directory containing `docker-compose.yml`.
+
+Requirements: Docker Engine with Compose v2, Bash, Python 3, internet access for the first build, and at least 6 GB of free disk space for the initial images and build cache. Native Go and Node.js installations are not required for this Docker workflow.
 
 ```bash
-./scripts/init-env.sh
+bash scripts/init-env.sh
 docker compose up --build -d
+docker compose ps -a
 ```
 
-مجله: <http://localhost:3000> — پنل نویسندگان: <http://localhost:3000/studio>
+- Publication: <http://localhost:3000>
+- Author and administrator studio: <http://localhost:3000/studio>
 
-اسکریپت آغازین `.env` را با چهار راز تصادفی مستقل می‌سازد و تنظیمات موجود را حفظ می‌کند؛ برای نسخه‌های قبلی، فقط راز جدید `REVALIDATION_SECRET` را در صورت نبودن اضافه می‌کند. Migration پیش از API اجرا می‌شود. دیتابیس و تصویرهای آپلودشده در volumeهای پایدار جدا نگهداری می‌شوند؛ PostgreSQL و Redis پورت عمومی ندارند. محتوای آزمایشی و حساب پیش‌فرض در دیتابیس ایجاد نمی‌شود.
+The initialization script creates a private `.env` with four independent random secrets. It preserves an existing configuration and adds `REVALIDATION_SECRET` if missing or empty. Migrations run before the API starts. PostgreSQL, Redis, and uploaded images use persistent volumes; database and Redis ports are not published to the host.
 
-## ایجاد مدیر اول
+A fresh database has no default accounts or sample articles. An exited `migrate` container with exit code `0` is expected.
+
+## Create the first administrator
+
+After the services start, use a unique email address and a password of 12–72 UTF-8 bytes:
 
 ```bash
-export ADMIN_EMAIL='erfan.najafi8213@gmail.com'
+export ADMIN_EMAIL='you@example.com'
 export ADMIN_NAME='Academy Admin'
 read -rs -p 'Admin password (12–72 bytes): ' ADMIN_PASSWORD
+echo
 export ADMIN_PASSWORD
 docker compose run --rm -e ADMIN_EMAIL -e ADMIN_NAME -e ADMIN_PASSWORD --entrypoint admin api
 unset ADMIN_PASSWORD
 ```
 
-سپس وارد پنل شوید. نویسندگان تنها با ایمیل و رمز عبور ثبت‌نام می‌کنند؛ ثبت‌نام عمومی نقش مدیر نمی‌سازد. از پنل، دسته و برچسب بسازید، مقاله بنویسید و نظرات را تأیید کنید.
+Sign in at `/studio`. Administrators can create categories and tags, publish articles, manage author accounts, and moderate comments. Public registration creates an author account, requires password confirmation in the browser, and signs the new author in immediately. Both registration password fields and the login password are hidden until their eye button is pressed. Authors can publish their own articles without an approval step.
 
-## ساختار
+## Write and manage articles
 
-- `apps/api`: Domain، Use Case، Repository مبتنی بر sqlc و HTTP مبتنی بر chi.
-- `apps/api/db`: schema، migrationهای golang-migrate و کوئری‌ها.
-- `apps/web`: مجله فارسی، SEO، جستجو، نظرات و پنل نویسندگان.
-- `docker-compose.yml` و `Caddyfile`: سرویس‌ها، healthcheck و درگاه HTTPS.
-- [معماری و قراردادهای API](docs/ARCHITECTURE.md)
-- [راهنمای مدیر و نویسنده](docs/USER_GUIDE.md)
-- [راهنمای استقرار و نگهداری](docs/OPERATIONS.md)
-- [گزارش آزمون‌ها و محدودیت‌های تأیید](docs/VERIFICATION.md)
+The editor accepts plain text or HTML, optional cover images, and ordered text, image, and link blocks. Use the inline upload button to insert one or more PNG/JPEG images and set each image's width from 80 to 2,000 pixels. Images retain their aspect ratio and fit the available page width. Links can point to a published article found through search or an external HTTP/HTTPS address. Preview the result and save explicitly; there is no autosave.
 
-## آزمون‌ها
+Administrators have separate **Articles**, **Comment management**, and **Author management** tabs. Switching tabs preserves the current editor state in the page; reloading or leaving the page loses unsaved changes. See the [user guide](docs/USER_GUIDE.md) for the complete workflow and current limits.
+
+## Stop and restart
+
+```bash
+docker compose down
+docker compose up -d
+```
+
+`down` preserves volumes. `down -v` deletes persistent data and is not an ordinary restart command. Run `docker compose up --build -d` after changing application code; rebuild the web image after changing `SITE_URL`.
+
+## Repository structure
+
+| Path                                             | Purpose                                                                                    |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `apps/api`                                       | Go domain, use cases, HTTP delivery, PostgreSQL repository, media storage, and mail worker |
+| `apps/api/db`                                    | SQL schema, migrations, and sqlc query sources                                             |
+| `apps/web`                                       | Persian publication, SEO, search, comments, and studio                                     |
+| `docker-compose.yml`, `Caddyfile`                | Services, readiness checks, persistent storage, and HTTPS gateway                          |
+| `docs`                                           | English documentation and verification history                                             |
+| `static`, `legacy`, `content-seed`, `index.html` | Historical Ghost demo artifacts                                                            |
+
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [Author and administrator guide](docs/USER_GUIDE.md)
+- [Development and testing](docs/DEVELOPMENT.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [API reference](docs/API_REFERENCE.md)
+- [Deployment, configuration, backups, and troubleshooting](docs/OPERATIONS.md)
+- [Verification history and unverified areas](docs/VERIFICATION.md)
+- [Historical Ghost demo](docs/LEGACY_DEMO.md)
+
+## Checks
+
+With Go and Node.js installed:
 
 ```bash
 cd apps/api
@@ -52,12 +91,14 @@ npm test
 npm run build
 ```
 
-آزمون یکپارچهٔ Linux با دیتابیس و Redis واقعی: `./scripts/test-integration.sh`. این آزمون یک schema موقت می‌سازد و پاک می‌کند؛ دیتای اصلی را حذف نمی‌کند. متغیرهای `TEST_DATABASE_URL` و `TEST_REDIS_URL` در CI برای همین تست‌ها استفاده می‌شوند. بدون آن‌ها، تست‌های یکپارچه با گزارش skip کنار گذاشته می‌شوند.
+Database and Redis integration tests are skipped unless their `TEST_DATABASE_URL` and `TEST_REDIS_URL` variables are available. On Linux with Docker Engine, run `bash scripts/test-integration.sh` from the repository root to provide real dependencies. PostgreSQL tests use temporary schemas, while Redis tests need an isolated test database. See [development and testing](docs/DEVELOPMENT.md) for details.
 
-## استقرار رسمی
+## Production
 
-در `.env` آدرس `SITE_URL=https://blog.expertsacademy.ir`، مقدار `CADDY_SITE=blog.expertsacademy.ir`، `APP_ENV=production`، پورت‌های `80/443` و SMTP واقعی را تنظیم کنید. پس از اتصال DNS به سرور و باز بودن پورت‌ها، `docker compose up --build -d` گواهی TLS را از طریق Caddy دریافت می‌کند. پیش از انتشار عمومی، مراحل [OPERATIONS](docs/OPERATIONS.md) را انجام دهید.
+Set `APP_ENV=production`, `SITE_URL=https://blog.expertsacademy.ir`, `CADDY_SITE=blog.expertsacademy.ir`, host ports `80` and `443`, and real SMTP credentials in `.env`. Configure DNS and network access before starting the stack. Caddy obtains and renews TLS certificates. Production rejects the mock mail driver and non-HTTPS origins. Follow [operations](docs/OPERATIONS.md) for the full deployment and backup procedure.
 
-## مسیر مهاجرت از دمو
+The current platform requires a server that can run containers. GitHub Pages cannot run the Go API, PostgreSQL, or the Next.js server. Ghost content is not imported automatically. Historical static publishing scripts apply only to the archived demo; `scripts/deploy-demo.sh` commits and force-pushes its Ghost publish checkout and must not be used to deploy this platform.
 
-`static/`، `legacy/`، `content-seed/` و `index.html` قبلی به‌عنوان آرشیو حفظ شده‌اند. سرویس جدید از این فایل‌ها اجرا نمی‌شود و محتوای Ghost به‌طور خودکار به بانک سازمانی وارد نمی‌شود. [راهنمای دمو قبلی](docs/LEGACY_DEMO.md) محفوظ است. GitHub Pages اجرای Go، PostgreSQL یا Next.js server را پشتیبانی نمی‌کند؛ DNS رسمی باید به میزبان کانتینری اشاره کند. اسکریپت قدیمی `deploy-demo.sh` مخصوص انتشار آرشیو است و نباید برای نسخهٔ سازمانی استفاده شود.
+## License
+
+See [LICENSE](LICENSE). The preserved Ghost demo's background and attribution are documented in the [archive guide](docs/LEGACY_DEMO.md).

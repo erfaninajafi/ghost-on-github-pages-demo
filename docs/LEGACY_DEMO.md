@@ -1,87 +1,34 @@
-# Ghost on GitHub Pages — Live Demo
+# Historical Ghost on GitHub Pages demo
 
-A live demonstration of [Ghost on GitHub Pages](https://github.com/paladini/ghost-on-github-pages) **version 3**: free Ghost blogging hosted on GitHub Pages with no server required.
+This repository originally demonstrated [Ghost on GitHub Pages](https://github.com/paladini/ghost-on-github-pages). Its generated sites and content export remain as historical artifacts. The active application is now ExpertsAcademy; use the [project README](../README.md) and [operations guide](OPERATIONS.md) to run or deploy it.
 
-**Live site:** https://paladini.github.io/ghost-on-github-pages-demo/
+## Archived artifacts
 
-## What this repo shows
+| Path                                      | Historical purpose                                                      |
+| ----------------------------------------- | ----------------------------------------------------------------------- |
+| [static](../static/)                      | Ghost 6.50 static export generated with gssg for the v3 demo            |
+| [legacy/v2/static](../legacy/v2/static/)  | Frozen 2018 Ghost 1.22.5/buster output with known localhost URL defects |
+| [legacy/v2](../legacy/v2/README.md)       | Classic demo background                                                 |
+| [content-seed](../content-seed/README.md) | Ghost JSON export and reproduction notes                                |
+| [index.html](../index.html)               | Historical root redirect to the static demo                             |
 
-| | **Current demo (v3)** | **Classic archive (v2)** |
-|---|---|---|
-| URL | [/static/](static/) | [/legacy/v2/static/](legacy/v2/static/) |
-| Ghost version | 5.x | 1.22.5 |
-| Static generator | gssg (Node.js) | buster (Python 2) |
-| Production URLs | Correct | Broken (localhost links) |
-| Tool version | [v3.0.0+](https://github.com/paladini/ghost-on-github-pages/releases/latest) | [v2.0.1](https://github.com/paladini/ghost-on-github-pages/releases/tag/v2.0.1) |
+The historical publication target recorded in scripts and metadata is `https://paladini.github.io/ghost-on-github-pages-demo/`. Its current availability is not part of this project's local verification. The archived static directories contain generated pages; they are not a Ghost server installation.
 
-The root `index.html` redirects to the v3 blog. The Classic v2 site is preserved under `legacy/v2/` as a historical reference — including its known localhost URL bugs.
+## Relationship to the current platform
 
-## Get your own blog
+Compose serves `apps/api` and `apps/web`, not the archived `static` directory or root `index.html`. Ghost exports are not automatically imported into PostgreSQL. The current studio, registration, moderation, image storage, and API need server processes and cannot run on GitHub Pages.
 
-Follow the [v3 Getting Started guide](https://github.com/paladini/ghost-on-github-pages/blob/master/docs/v3/GETTING-STARTED.md):
+The former upstream v3 setup and migration references remain available as historical context: [getting started](https://github.com/paladini/ghost-on-github-pages/blob/master/docs/v3/GETTING-STARTED.md) and [migration guide](https://github.com/paladini/ghost-on-github-pages/blob/master/docs/MIGRATION.md). Consult the upstream project's applicable version before rebuilding an archive.
 
-1. Install [Node.js](https://nodejs.org/) and `wget`
-2. Download [ghost-on-github-pages v3](https://github.com/paladini/ghost-on-github-pages/releases/latest)
-3. Run `./install.sh`
-4. Write posts at `http://localhost:2373/ghost`
-5. Publish with `cd ~/.ghost && ./deploy.sh`
+## Historical maintainer scripts
 
-Upgrading from Classic v2? See the [Migration guide](https://github.com/paladini/ghost-on-github-pages/blob/master/docs/MIGRATION.md).
+- `scripts/generate-static.ps1` generates gssg output from a local Ghost instance at `~/.ghost/current`, replaces this checkout's `static` directory, and runs the postprocessor. Its domain is hardcoded to the historical demo target.
+- `scripts/post-process-static.js` adjusts the generated demo assets and paths.
+- `scripts/validate-static.sh` and `.github/workflows/validate.yml` check the static archive separately from platform CI.
+- `scripts/deploy-demo.sh` invokes the upstream deployment in `~/.ghost`, merges preserved archive assets into `~/.ghost/publish`, commits, and **force-pushes** its `master` and `gh-pages` targets. It preserves selected legacy/script/seed/CI files and the root README, but does not package the current `apps`, `docs`, or Compose platform for deployment.
 
-## Repository layout
+Use these scripts only in a dedicated archive-maintenance checkout after reviewing their paths and remote targets. They are not the ExpertsAcademy production release process. No historical deploy script was executed as part of the documentation revision.
 
-```
-├── index.html          # Redirect to v3 blog
-├── static/             # v3 static site (gssg output)
-├── legacy/v2/          # Frozen 2018 Classic demo
-├── content-seed/       # Ghost export for reproducing demo content
-├── scripts/            # Maintainer deploy scripts
-└── .github/workflows/  # CI validation
-```
+## Attribution and license
 
-This repo contains **only static files and seed content** — not a full Ghost installation. That is by design in v3 (see [issue #9](https://github.com/paladini/ghost-on-github-pages/issues/9)).
-
-## Maintainers: republishing the demo
-
-### Prerequisites
-
-- Node.js, wget, and Ghost CLI installed
-- Local Ghost blog at `~/.ghost` configured for this repository
-- Bash shell (Git Bash or WSL on Windows)
-
-### Restore demo content
-
-```bash
-cd ~/.ghost/current
-ghost import content-seed/demo-posts.json
-ghost start
-```
-
-### Publish
-
-From this repository checkout:
-
-```bash
-chmod +x scripts/deploy-demo.sh
-./scripts/deploy-demo.sh
-```
-
-The deploy script runs the standard v3 `deploy.sh` and preserves `legacy/`, `content-seed/`, CI workflows, and this README in the published output.
-
-### Deploy settings
-
-The demo uses these GitHub Pages settings (saved in `~/.ghost/deploy.conf`):
-
-```
-GH_USERNAME=paladini
-GH_REPO=ghost-on-github-pages-demo
-PRODUCTION_DOMAIN=https://paladini.github.io/ghost-on-github-pages-demo
-```
-
-## License
-
-MIT — see [LICENSE](LICENSE).
-
-## About
-
-Created by [Fernando Paladini](https://github.com/paladini) to showcase free Ghost hosting on GitHub Pages.
+The original demo was created by [Fernando Paladini](https://github.com/paladini). The preserved site was generated with [Ghost](https://ghost.org/) and, for Classic v2, [Buster](https://github.com/axitkhurana/buster). See the repository [LICENSE](../LICENSE).

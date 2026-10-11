@@ -1,46 +1,65 @@
-# گزارش بررسی پیاده‌سازی — ۲۰۲۶/۱۰/۰۷
+# Verification record
 
-این گزارش مربوط به اجرای محلی همین مخزن است؛ تأیید استقرار واقعی روی دامنه یا تحویل ایمیل از SMTP سازمان نیست.
+This document records checks performed during implementation on 2026-10-07 and 2026-10-11. It describes local evidence, not approval of the public production domain or organizational SMTP delivery. It is a historical record rather than a guarantee that every check was rerun during subsequent documentation edits.
 
-## بررسی‌های موفق
+For reproducible commands, see [development and testing](DEVELOPMENT.md). Deployment and recovery procedures are in [operations](OPERATIONS.md).
 
-- ساخت imageهای `api` و `web` از Dockerfileهای مخزن؛ اجرای Compose شامل PostgreSQL، Redis، migrate، API، Next.js و Caddy.
-- Migration اولیه با golang-migrate روی PostgreSQL 16؛ آزمون down/up در schema موقت مجزا با بازسازی هر هفت جدول.
-- `go test -race ./...` با PostgreSQL و Redis واقعی: ثبت‌نام و hash، مجوز انتشار، پاک‌سازی HTML، فیلتر، جستجوی فارسی، rollback تراکنش مقاله/تگ، درخت نظرات، FK بین مقاله‌ها، تأیید همزمان، اعلان غیرتکراری در همان وضعیت، افزایش همزمان بازدید و rate limit اتمیک.
-- `go vet ./...`، تولید واقعی خروجی sqlc 1.30.0 و تطابق schema با migration اولیه.
-- `npm run typecheck`، `npm test`، `npm run format:check` و build موفق Next.js 15.5.27. مقاله‌ها در خروجی build به‌صورت SSG/ISR ثبت شدند.
-- آزمون HTTP روی درگاه محلی: signup، کوکی HttpOnly، منع دسترسی ناشناس به پنل، رد Origin بیگانه، انتشار، پاک‌سازی اسکریپت، شمارش بازدید، نظر مهمان، reply، moderation، suggestion و popular.
-- بررسی XML واقعی sitemap و RSS؛ بررسی canonical، OpenGraph و JSON-LD مقاله؛ پاسخ‌های 400 برای صفحه‌بندی نامعتبر، 404 برای مقالهٔ ناموجود و 401 برای پنل بدون نشست.
-- بررسی مرورگر: RTL و زبان فارسی، فونت محلی، تم روشن/تاریک، جستجوی debounced، مقاله و پاسخ تودرتو، باز شدن فرم زیر همان نظر، ورود به پنل، فهرست مقاله‌ها و تب نظرات تأییدشده.
-- بررسی عرض موبایل: عرض سند از عرض viewport بیشتر نبود؛ فرم پاسخ و متن مقاله بدون اسکرول افقی نمایش داده شدند.
-- تست رگرسیون کوکی نامعتبر: خواندن عمومی به‌صورت مهمان ادامه پیدا می‌کند و کوکی پاک می‌شود؛ نوشتن، پنل و Bearer نامعتبر همچنان 401 می‌دهند.
+## Initial platform — 2026-10-07
 
-## پاک‌سازی
+The following checks completed successfully in the local implementation environment:
 
-حساب موقت QA، سه مقالهٔ آزمایشی، نظرات و اعلان‌های متعلق به آن‌ها بعد از بررسی پاک شدند؛ cache وب بازسازی شد. دادهٔ آموزشی مصنوعی و حساب با رمز پیش‌فرض در خروجی نهایی باقی نمانده است. `.env` محلی با رازهای تصادفی تولید شده و در git نادیده گرفته می‌شود. فایل `.cursorrules` موجود در ابتدای کار تغییر داده نشد.
+- Built API and web images from the repository Dockerfiles and ran PostgreSQL, Redis, migrations, Go, Next.js, and Caddy through Compose.
+- Applied the initial migration to PostgreSQL 16 and exercised down/up in an isolated schema, recreating all seven application tables.
+- Ran `go test -race ./...` with real PostgreSQL and Redis. Coverage included signup/password hashing, publication permissions, HTML sanitization, Persian filtering/search, article/tag transaction rollback, comment trees, cross-article foreign keys, concurrent moderation, same-status notification idempotency, concurrent view increments, and atomic rate limiting.
+- Ran `go vet ./...`, regenerated with sqlc 1.30.0, and checked schema/migration consistency.
+- Passed frontend type checks, tests, formatting checks, and a Next.js 15.5.27 build. Article output used SSG/ISR.
+- Exercised gateway HTTP behavior: signup, HttpOnly cookies, protected studio access, foreign-Origin rejection, publication, script sanitization, views, guest comments, replies, moderation, suggestions, and popular articles.
+- Inspected actual RSS/sitemap XML and article canonical, OpenGraph, and JSON-LD output. Checked invalid pagination (400), missing articles (404), and unauthenticated protected access (401).
+- Checked the browser's Persian RTL layout, local font, light/dark theme, debounced search, nested replies, branch-local reply form, sign-in, article lists, and approved-comment controls.
+- Checked a mobile viewport for horizontal overflow and verified article text/reply forms fit.
+- Verified invalid-cookie regression handling: public reads continue as guest and clear the cookie; writes, protected routes, and invalid Bearer credentials still fail with 401.
 
-## مواردی که این اجرا تأیید نکرد
+Temporary QA accounts, three articles, their comments, and notification jobs were removed after this pass, and web cache was refreshed. No default-password account or artificial training content was retained. The local `.env` used generated secrets and was ignored by Git. Existing `.cursorrules` was preserved.
 
-- DNS و TLS دامنهٔ `blog.expertsacademy.ir` و ارسال واقعی ایمیل: نیازمند تنظیمات سرور و SMTP سازمان هستند؛ محیط محلی از Mock استفاده کرد.
-- اسکن advisory کامل وابستگی‌ها: درخواست `npm audit` به registry موفق نشد و `govulncheck` از `vuln.go.dev` پاسخ HTTP 403 دریافت کرد. در نتیجه نبود آسیب‌پذیری در dependencyها ادعا نمی‌شود؛ این دو بررسی باید در شبکهٔ CI دارای دسترسی انجام شوند.
-- آزمون بار با ترافیک واقعی، restore پشتیبان سازمان و استقرار چندگرهی: این موارد وابسته به محیط عملیاتی‌اند؛ مراحل نگهداری در OPERATIONS.md آمده است.
+## Administrator/author separation — 2026-10-11
 
-Workflow `platform.yml` آزمون‌ها، ساخت فرانت‌اند، تطابق sqlc و رفت‌وبرگشت migration روی دیتابیس دورریختنی CI را تعریف می‌کند. این گزارش موفقیت اجرای محلی را ثبت می‌کند؛ اجرای GitHub Actions پس از push جداگانه انجام خواهد شد.
+- Applied migration 2 while preserving local data. Both migrations completed down/up checks in a temporary schema.
+- Passed Go race tests against real PostgreSQL/Redis and Go vet. HTTP tests rejected author access to account management, archive/delete/trash, taxonomy creation, and moderation. Disabling an account rejected both its existing JWT and subsequent login.
+- Database tests covered author creation/update, protection of administrator accounts, preserved article ownership during administrator edits, archiving/deleting administrator and author articles, removal from suggestions, and private restoration without content loss. A focused check also passed after adding author-name joins.
+- Regeneration with sqlc 1.30.0 produced identical output. Frontend type checks/tests and Docker/Next.js builds passed.
+- Browser checks created an author from the administrator account without replacing its session. The author created a draft and had no management controls. The administrator archived, deleted, and restored that article as a draft while preserving the original author's name.
+- Removed the two QA accounts and their single temporary article while preserving existing user data. PostgreSQL, Redis, API, and web were healthy after the update.
 
-## تکمیل تفکیک مدیر و نویسنده — ۲۰۲۶/۱۰/۱۱
+## Optional covers and Persian article paths — 2026-10-11
 
-- Migration شمارهٔ ۲ با حفظ دادهٔ محلی اجرا شد؛ disabled_at و وضعیت‌های archived/deleted اضافه شدند. رفت‌وبرگشت هر دو migration در schema موقت موفق بود.
-- `go test -race ./...` با PostgreSQL و Redis واقعی و `go vet ./...` موفق شدند. تست مسیرهای HTTP رد دسترسی نویسنده به مدیریت حساب، آرشیو، حذف، سطل حذف، taxonomy و moderation را بررسی می‌کند. غیرفعال‌کردن حساب، JWT قبلی و ورود مجدد را رد می‌کند.
-- تست دیتابیس ایجاد و ویرایش نویسنده، جلوگیری از تغییر حساب مدیر، حفظ author_id هنگام ویرایش مدیر، آرشیو/حذف مقالهٔ خود مدیر و نویسنده، حذف از suggestion، و بازگردانی خصوصی بدون از دست‌رفتن محتوا را پوشش می‌دهد. تست متمرکز پس از افزودن JOIN نام نویسنده نیز موفق بود.
-- تولید مجدد sqlc 1.30.0 خروجی یکسان داشت؛ typecheck، تست‌های وب و build Docker/Next.js موفق بودند.
-- در مرورگر، مدیر حساب نویسنده ساخت و نشستش حفظ شد؛ نویسنده مقالهٔ پیش‌نویس ایجاد کرد و امکانات مدیریتی نداشت. مدیر مقالهٔ نویسنده را آرشیو، حذف و به پیش‌نویس بازگرداند؛ نام نویسندهٔ اصلی در فهرست حفظ شد.
-- دو حساب QA و تنها مقالهٔ موقتشان پاک شدند؛ داده‌های موجود کاربر حفظ شدند. سرویس‌های PostgreSQL، Redis، API و web پس از به‌روزرسانی سالم‌اند. بررسی دامنهٔ رسمی و SMTP همچنان در محدودهٔ این اجرای محلی نیست.
+- Reproduced the Persian-path 404 on an existing article: Go returned it, but the Next.js route encoded its already encoded slug again. The same article loaded in the browser after the fix.
+- Applied migration 3 without removing data and checked all three migrations in an isolated schema. Generated sqlc 1.30.0 output from current schema/query sources.
+- Passed Go race tests with real PostgreSQL/Redis, Go vet, frontend type checks/tests, and Docker/Next.js builds. Coverage included actual PNG/JPEG validation, byte/dimension limits, stripping appended data, file ownership, path traversal rejection, persistent storage, multipart contract, and Persian slugs.
+- A temporary author uploaded a PNG through the studio and published a Persian-slug article. A page previously cached as 404 showed the title, text, and cover immediately after publication. Next.js optimized image loading and the OpenGraph cover URL were checked.
+- Removed the cover reference and saved; the article stayed available without a cover.
+- Confirmed the separate upload volume. Removed only QA account/article/media/ranking data and invalidated their cache, preserving the two pre-existing articles and accounts.
 
-## تصویر جلد اختیاری و رفع ۴۰۴ نشانی فارسی — ۲۰۲۶/۱۰/۱۱
+## Inline images, links, passwords, and studio tabs — 2026-10-11
 
-- مشکل روی مقالهٔ موجود کاربر بازتولید شد: API مقاله را برمی‌گرداند، اما پارامتر فارسی Next.js هنگام واکشی دوباره percent-encode می‌شد. پس از اصلاح، همان مقاله در مرورگر باز شد.
-- Migration شمارهٔ ۳ با حفظ داده‌ها اجرا شد؛ رفت‌وبرگشت هر سه migration در schema موقت موفق بود. خروجی sqlc 1.30.0 از schema و queryهای فعلی تولید شد.
-- آزمون‌های Go با race detector و PostgreSQL/Redis واقعی، `go vet ./...`، typecheck و تست‌های وب و ساخت Docker/Next.js موفق شدند. آزمون‌ها اعتبارسنجی واقعی PNG/JPEG، محدودیت حجم و ابعاد، حذف دادهٔ اضافی تصویر، مالکیت فایل، جلوگیری از پیمایش مسیر، ذخیرهٔ پایدار، قرارداد multipart و نشانی فارسی را پوشش می‌دهند.
-- یک نویسندهٔ موقت از فرم پنل تصویر PNG آپلود کرد و مقاله‌ای با نشانی فارسی منتشر کرد. صفحه‌ای که پیش از انتشار ۴۰۴ نشان داده بود، بلافاصله پس از انتشار عنوان، متن و تصویر را نمایش داد. بارگیری تصویر بهینه‌شدهٔ Next.js و URL تصویر در OpenGraph نیز بررسی شدند.
-- برداشتن تصویر و ذخیرهٔ دوباره از پنل، جلد را از صفحه حذف کرد و مقاله همچنان باز شد؛ تصویر برای انتشار اجباری نیست.
-- Compose با volume مستقل تصویرها بالا آمد. فقط حساب، مقاله، تصویر و رتبه‌بندی مربوط به QA پاک شدند و cache آن‌ها باطل شد؛ دو مقاله و حساب‌های قبلی کاربر حفظ شدند. بررسی استقرار رسمی و SMTP همچنان خارج از محدودهٔ این اجراست.
+- New Go tests covered rendering and save/read round trips with multiple independently sized images and internal/external links in both formats. They also covered HTML-looking plain text, unsafe links, foreign-account media, invalid widths, and excessive block count/size.
+- Passed `go test -race ./...`, `go vet ./...`, and `scripts/test-integration.sh` with real PostgreSQL and Redis. PostgreSQL integration tests used isolated schemas rather than deleting the main content.
+- Frontend tests/type checks covered editor block retention, link/image insertion and removal, safe preview output, and matching/UTF-8 byte limits for passwords. Local and Docker builds passed.
+- Browser checks used a temporary API fixture with in-memory accounts/articles, not the primary database. Passwords began masked, eye controls changed visibility, and mismatched confirmation was rejected. Added two images at widths 320 and 480, selected a published article through internal search, and inserted an external URL. Saving plain-text and HTML versions, reloading, and reopening preserved widths and links.
+- Confirmed separate author/comment tabs and retained unsaved article state while switching tabs. The inspected viewport showed no horizontal overflow, and image elements displayed at the selected 320/480 widths.
+- This browser fixture created no account or article in the primary PostgreSQL database. Server persistence behavior was covered separately by Go tests. Temporary browser servers were stopped. The rebuilt local stack returned 200 for the home page/studio, with healthy long-running services and migrations exiting successfully.
+
+## Documentation revision — 2026-10-11
+
+Documentation was rewritten in English and checked against current routes, validation, editor behavior, configuration, migrations, and CI definitions. The revision adds a documentation index, native development guide, and API reference, and clarifies storage backups, role boundaries, cache behavior, and pagination limits. Documentation checks validate local links/anchors, JSON examples, and Bash example syntax; they do not execute deployment, restore, or account-creation examples.
+
+The documentation pass checked 13 Markdown files, 80 local links/anchors, three JSON examples, and 29 Bash examples. Local targets and anchors existed, JSON parsed, Bash syntax checks passed, and Prettier plus `git diff --check` passed. No Persian prose remains in these Markdown guides. The static snapshot and seed metadata were also checked to correct the archived Ghost version to 6.50/6.50.0.
+
+## Not verified by these local passes
+
+- Production DNS, certificate issuance/renewal for `blog.expertsacademy.ir`, and real organizational SMTP delivery. Local mail used the mock driver.
+- A complete dependency advisory scan: `npm audit` could not reach its registry successfully, and `govulncheck` received HTTP 403 from `vuln.go.dev`. No claim of vulnerability-free dependencies is made; rerun scans in a network-enabled environment.
+- Production load, an organizational backup restore, multi-host operation, CDN invalidation, or delivery guarantees beyond the implemented at-least-once outbox behavior.
+- Execution of the newly documented native-development and recovery recipes as a complete end-to-end session; their configuration/command syntax has been reviewed, but those environments were not started by the documentation revision.
+- GitHub Actions success after a push. [platform.yml](../.github/workflows/platform.yml) defines the CI checks; historical local success is not a recorded remote CI run.
+
+Known implementation limits include unpaginated 200-record article/moderation lists, unpaginated public comment trees, shared server-side API rate buckets, local media/cache coordination across hosts, organization-only structured-data authors, and no autosave, password recovery, automatic redirects, media cleanup, or permanent article deletion. See the [documentation index](README.md#current-scope-and-limits) for current scope.
