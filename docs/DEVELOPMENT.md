@@ -169,7 +169,7 @@ Generated files in `internal/repository/db` must not be edited by hand. Commit g
 
 ## CI and manual acceptance
 
-[platform.yml](../.github/workflows/platform.yml) runs Go vet/tests against PostgreSQL and Redis, verifies sqlc output, applies migrations, and performs a migration down/up round trip on its disposable database. Its web job installs dependencies, type-checks, tests, and builds. The separate [validate.yml](../.github/workflows/validate.yml) checks the archived static demo.
+[platform.yml](../.github/workflows/platform.yml) runs Go vet/tests against PostgreSQL and Redis, verifies sqlc output, applies migrations, and performs a migration down/up round trip on its disposable database. Its web job installs dependencies, type-checks, tests, and builds.
 
 For editor or studio changes, supplement automated checks with a browser pass: register with matching and mismatching passwords, exercise eye buttons, save and reopen both content formats with two different image widths and both link types, and check role-specific tabs. Confirm that an unsaved draft survives tab switching and that a refresh requires a saved article. Verify public output at narrow and wide viewport sizes.
 

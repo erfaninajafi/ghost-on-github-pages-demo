@@ -7,12 +7,6 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Local Ghost install (never commit)
-.ghost/
-
-# Temp deploy backups
-/tmp/
-
 # ExpertsAcademy applications
 .env
 .env.*

@@ -10,9 +10,8 @@ These guides describe the current ExpertsAcademy application. Documentation is i
 | [Architecture](ARCHITECTURE.md)       | Service boundaries, database design, security, caching, media, and email delivery             |
 | [API reference](API_REFERENCE.md)     | Authentication, endpoints, request examples, content blocks, errors, and limits               |
 | [Operations](OPERATIONS.md)           | Environment variables, production deployment, backups, migrations, and troubleshooting        |
-| [Troubleshooting](TROUBLESHOOTING.md) | Common platform problems and the archived static validator's diagnostics                      |
+| [Troubleshooting](TROUBLESHOOTING.md) | Common platform problems and diagnostic commands                                              |
 | [Verification](VERIFICATION.md)       | Recorded local checks, their scope, and outstanding production validation                     |
-| [Legacy demo](LEGACY_DEMO.md)         | Historical Ghost/GitHub Pages artifacts and publishing caveats                                |
 
 ## Common tasks
 

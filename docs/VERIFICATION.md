@@ -52,7 +52,13 @@ Temporary QA accounts, three articles, their comments, and notification jobs wer
 
 Documentation was rewritten in English and checked against current routes, validation, editor behavior, configuration, migrations, and CI definitions. The revision adds a documentation index, native development guide, and API reference, and clarifies storage backups, role boundaries, cache behavior, and pagination limits. Documentation checks validate local links/anchors, JSON examples, and Bash example syntax; they do not execute deployment, restore, or account-creation examples.
 
-The documentation pass checked 13 Markdown files, 80 local links/anchors, three JSON examples, and 29 Bash examples. Local targets and anchors existed, JSON parsed, Bash syntax checks passed, and Prettier plus `git diff --check` passed. No Persian prose remains in these Markdown guides. The static snapshot and seed metadata were also checked to correct the archived Ghost version to 6.50/6.50.0.
+The documentation pass checked 13 Markdown files, 80 local links/anchors, three JSON examples, and 29 Bash examples. Local targets and anchors existed, JSON parsed, Bash syntax checks passed, and Prettier plus `git diff --check` passed. No Persian prose remains in these Markdown guides.
+
+## Repository cleanup — 2026-10-11
+
+Removed 88 tracked archive files, including generated sites, seed data, the redirect page, obsolete publishing helpers, and archive-specific documentation/CI. Updated the remaining documentation and ignore rules. The current application code, Compose deployment, environment/integration scripts, and platform workflow were unchanged. Existing license attribution was retained.
+
+Checked the remaining nine Markdown guides, 58 local links/anchors, three JSON examples, and 27 Bash examples. Documentation formatting, remaining script syntax, removed-path checks, and `git diff --check` passed.
 
 ## Not verified by these local passes
 

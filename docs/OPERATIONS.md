@@ -242,5 +242,3 @@ This changes the database role password; update other clients of the same role t
 | Save fails with 409                           | Duplicate slug or an article archived/deleted since its editor was opened                                          |
 | Email is absent                               | Mock driver, SMTP STARTTLS/authentication, provider policy, spam folder, or exhausted outbox jobs                  |
 | Changed site origin still appears in metadata | Rebuild the web image; public site URL is a build-time value too                                                   |
-
-The legacy Ghost scripts and GitHub Pages publish workflow do not deploy the current server platform. Refer to the [legacy guide](LEGACY_DEMO.md) only when working on the archived static demo.

@@ -56,14 +56,13 @@ docker compose up -d
 
 ## Repository structure
 
-| Path                                             | Purpose                                                                                    |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `apps/api`                                       | Go domain, use cases, HTTP delivery, PostgreSQL repository, media storage, and mail worker |
-| `apps/api/db`                                    | SQL schema, migrations, and sqlc query sources                                             |
-| `apps/web`                                       | Persian publication, SEO, search, comments, and studio                                     |
-| `docker-compose.yml`, `Caddyfile`                | Services, readiness checks, persistent storage, and HTTPS gateway                          |
-| `docs`                                           | English documentation and verification history                                             |
-| `static`, `legacy`, `content-seed`, `index.html` | Historical Ghost demo artifacts                                                            |
+| Path                              | Purpose                                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------------------------ |
+| `apps/api`                        | Go domain, use cases, HTTP delivery, PostgreSQL repository, media storage, and mail worker |
+| `apps/api/db`                     | SQL schema, migrations, and sqlc query sources                                             |
+| `apps/web`                        | Persian publication, SEO, search, comments, and studio                                     |
+| `docker-compose.yml`, `Caddyfile` | Services, readiness checks, persistent storage, and HTTPS gateway                          |
+| `docs`                            | English documentation and verification history                                             |
 
 ## Documentation
 
@@ -74,7 +73,6 @@ docker compose up -d
 - [API reference](docs/API_REFERENCE.md)
 - [Deployment, configuration, backups, and troubleshooting](docs/OPERATIONS.md)
 - [Verification history and unverified areas](docs/VERIFICATION.md)
-- [Historical Ghost demo](docs/LEGACY_DEMO.md)
 
 ## Checks
 
@@ -97,8 +95,8 @@ Database and Redis integration tests are skipped unless their `TEST_DATABASE_URL
 
 Set `APP_ENV=production`, `SITE_URL=https://blog.expertsacademy.ir`, `CADDY_SITE=blog.expertsacademy.ir`, host ports `80` and `443`, and real SMTP credentials in `.env`. Configure DNS and network access before starting the stack. Caddy obtains and renews TLS certificates. Production rejects the mock mail driver and non-HTTPS origins. Follow [operations](docs/OPERATIONS.md) for the full deployment and backup procedure.
 
-The current platform requires a server that can run containers. GitHub Pages cannot run the Go API, PostgreSQL, or the Next.js server. Ghost content is not imported automatically. Historical static publishing scripts apply only to the archived demo; `scripts/deploy-demo.sh` commits and force-pushes its Ghost publish checkout and must not be used to deploy this platform.
+Deployment requires a host that can run Docker containers and provide persistent storage for PostgreSQL and uploaded images.
 
 ## License
 
-See [LICENSE](LICENSE). The preserved Ghost demo's background and attribution are documented in the [archive guide](docs/LEGACY_DEMO.md).
+See [LICENSE](LICENSE).
